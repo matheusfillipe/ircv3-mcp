@@ -1,19 +1,31 @@
 import { z } from 'zod';
 import { renderTranscript } from './render';
 import { getAccount } from '../config/store';
+import { setCursor } from '../state/cursors';
 import type { SessionPool } from './session';
 import type { Selector } from '../irc-core/chathistory';
 
-export interface ToolDef {
-  name: string;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  config: any;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  handler: (args: any) => Promise<any>;
+export type ToolResult = {
+  content: Array<{ type: 'text'; text: string }>;
+  structuredContent?: Record<string, unknown>;
+  isError?: boolean;
+};
+
+export interface ToolConfig {
+  title?: string;
+  description?: string;
+  inputSchema?: Record<string, z.ZodTypeAny>;
+  outputSchema?: Record<string, z.ZodTypeAny>;
+  annotations?: Record<string, boolean | undefined>;
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function errResult(msg: string): any {
+export interface ToolDef {
+  name: string;
+  config: ToolConfig;
+  handler: (args: Record<string, unknown>) => Promise<ToolResult>;
+}
+
+function errResult(msg: string): ToolResult {
   return { content: [{ type: 'text' as const, text: msg }], isError: true };
 }
 
@@ -40,7 +52,7 @@ export function makeTools(ctx: { pool: SessionPool }): ToolDef[] {
         },
         annotations: { readOnlyHint: true, openWorldHint: false },
       },
-      handler: async () => {
+      handler: async (_args: Record<string, unknown>) => {
         const networks = pool.status();
         return {
           content: [{ type: 'text' as const, text: JSON.stringify(networks) }],
@@ -64,11 +76,12 @@ export function makeTools(ctx: { pool: SessionPool }): ToolDef[] {
         },
         annotations: { readOnlyHint: true, openWorldHint: true },
       },
-      handler: async (args: { account?: string }) => {
+      handler: async (args: Record<string, unknown>) => {
         try {
-          const client = await pool.get(args.account);
+          const { account } = args as { account?: string };
+          const client = await pool.get(account);
           const result = {
-            account: args.account ?? '',
+            account: account ?? '',
             nick: client.nick,
             connected: client.connected,
             network: client.isupport.network,
@@ -105,22 +118,30 @@ export function makeTools(ctx: { pool: SessionPool }): ToolDef[] {
         },
         annotations: { readOnlyHint: true, openWorldHint: true },
       },
-      handler: async (args: {
-        account?: string;
-        target: string;
-        mode?: 'latest' | 'before' | 'after' | 'around';
-        msgid?: string;
-        limit?: number;
-        format?: 'markdown' | 'structured' | 'both';
-      }) => {
+      handler: async (args: Record<string, unknown>) => {
         try {
-          const mode = args.mode ?? 'latest';
-          const limit = args.limit ?? 50;
-          const format = args.format ?? 'markdown';
+          const {
+            account,
+            target,
+            mode: modeArg,
+            msgid,
+            limit: limitArg,
+            format: formatArg,
+          } = args as {
+            account?: string;
+            target: string;
+            mode?: 'latest' | 'before' | 'after' | 'around';
+            msgid?: string;
+            limit?: number;
+            format?: 'markdown' | 'structured' | 'both';
+          };
+          const mode = modeArg ?? 'latest';
+          const limit = limitArg ?? 50;
+          const format = formatArg ?? 'markdown';
 
           let selector: Selector;
-          if (args.msgid) {
-            selector = { type: 'msgid', value: args.msgid };
+          if (msgid) {
+            selector = { type: 'msgid', value: msgid };
           } else if (mode === 'latest') {
             selector = { type: 'star' };
           } else {
@@ -129,9 +150,15 @@ export function makeTools(ctx: { pool: SessionPool }): ToolDef[] {
             );
           }
 
-          const client = await pool.get(args.account);
-          const messages = await client.readHistory({ target: args.target, mode, selector, limit });
+          const accountName = getAccount(account).name;
+          const client = await pool.get(account);
+          const messages = await client.readHistory({ target, mode, selector, limit });
           const markdown = renderTranscript(messages, client.reactions);
+
+          if (messages.length > 0) {
+            const newest = messages[messages.length - 1]!;
+            setCursor(accountName, target, { msgid: newest.msgid, time: newest.time });
+          }
 
           const structuredContent: { messages: typeof messages; markdown?: string } = { messages };
           if (format !== 'structured') structuredContent.markdown = markdown;
@@ -165,13 +192,22 @@ export function makeTools(ctx: { pool: SessionPool }): ToolDef[] {
         },
         annotations: { readOnlyHint: true, openWorldHint: true },
       },
-      handler: async (args: { account?: string; hours?: number; limit?: number }) => {
+      handler: async (args: Record<string, unknown>) => {
         try {
-          const hours = args.hours ?? 24;
-          const limit = args.limit ?? 50;
+          const {
+            account,
+            hours: hoursArg,
+            limit: limitArg,
+          } = args as {
+            account?: string;
+            hours?: number;
+            limit?: number;
+          };
+          const hours = hoursArg ?? 24;
+          const limit = limitArg ?? 50;
           const end = new Date().toISOString();
           const start = new Date(Date.now() - hours * 3_600_000).toISOString();
-          const client = await pool.get(args.account);
+          const client = await pool.get(account);
           const conversations = await client.listConversations({ start, end, limit });
           return {
             content: [{ type: 'text' as const, text: JSON.stringify(conversations) }],
@@ -195,10 +231,11 @@ export function makeTools(ctx: { pool: SessionPool }): ToolDef[] {
         },
         annotations: { readOnlyHint: true, openWorldHint: true },
       },
-      handler: async (args: { account?: string; channel: string }) => {
+      handler: async (args: Record<string, unknown>) => {
         try {
-          const client = await pool.get(args.account);
-          const members = await client.listMembers(args.channel);
+          const { account, channel } = args as { account?: string; channel: string };
+          const client = await pool.get(account);
+          const members = await client.listMembers(channel);
           return {
             content: [{ type: 'text' as const, text: JSON.stringify(members) }],
             structuredContent: { members },
@@ -225,10 +262,11 @@ export function makeTools(ctx: { pool: SessionPool }): ToolDef[] {
         },
         annotations: { readOnlyHint: true, openWorldHint: true },
       },
-      handler: async (args: { account?: string; nick: string }) => {
+      handler: async (args: Record<string, unknown>) => {
         try {
-          const client = await pool.get(args.account);
-          const result = await client.whois(args.nick);
+          const { account, nick } = args as { account?: string; nick: string };
+          const client = await pool.get(account);
+          const result = await client.whois(nick);
           return {
             content: [{ type: 'text' as const, text: JSON.stringify(result) }],
             structuredContent: result,
@@ -257,25 +295,33 @@ export function makeTools(ctx: { pool: SessionPool }): ToolDef[] {
         outputSchema: { msgid: z.string().optional() },
         annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: true },
       },
-      handler: async (args: {
-        account?: string;
-        target: string;
-        text?: string;
-        lines?: string[];
-        notice?: boolean;
-        in_reply_to?: string;
-      }) => {
+      handler: async (args: Record<string, unknown>) => {
         try {
-          const lines = args.lines ?? (args.text !== undefined ? [args.text] : undefined);
+          const {
+            account,
+            target,
+            text,
+            lines: linesArg,
+            notice,
+            in_reply_to,
+          } = args as {
+            account?: string;
+            target: string;
+            text?: string;
+            lines?: string[];
+            notice?: boolean;
+            in_reply_to?: string;
+          };
+          const lines = linesArg ?? (text !== undefined ? [text] : undefined);
           if (!lines) {
             return errResult('Error: provide either text or lines to send a message.');
           }
-          const client = await pool.get(args.account);
+          const client = await pool.get(account);
           const result = await client.sendMessage({
-            target: args.target,
+            target,
             lines,
-            notice: args.notice,
-            inReplyTo: args.in_reply_to,
+            notice,
+            inReplyTo: in_reply_to,
           });
           return {
             content: [{ type: 'text' as const, text: JSON.stringify(result) }],
@@ -303,21 +349,17 @@ export function makeTools(ctx: { pool: SessionPool }): ToolDef[] {
         outputSchema: { ok: z.literal(true) },
         annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: true },
       },
-      handler: async (args: {
-        account?: string;
-        target: string;
-        msgid: string;
-        emoji: string;
-        remove?: boolean;
-      }) => {
+      handler: async (args: Record<string, unknown>) => {
         try {
-          const client = await pool.get(args.account);
-          await client.react({
-            target: args.target,
-            msgid: args.msgid,
-            emoji: args.emoji,
-            remove: args.remove,
-          });
+          const { account, target, msgid, emoji, remove } = args as {
+            account?: string;
+            target: string;
+            msgid: string;
+            emoji: string;
+            remove?: boolean;
+          };
+          const client = await pool.get(account);
+          await client.react({ target, msgid, emoji, remove });
           return {
             content: [{ type: 'text' as const, text: '{"ok":true}' }],
             structuredContent: { ok: true as const },
@@ -342,10 +384,15 @@ export function makeTools(ctx: { pool: SessionPool }): ToolDef[] {
         outputSchema: { ok: z.literal(true) },
         annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: true },
       },
-      handler: async (args: { account?: string; channel: string; key?: string }) => {
+      handler: async (args: Record<string, unknown>) => {
         try {
-          const client = await pool.get(args.account);
-          client.join(args.channel, args.key);
+          const { account, channel, key } = args as {
+            account?: string;
+            channel: string;
+            key?: string;
+          };
+          const client = await pool.get(account);
+          client.join(channel, key);
           return {
             content: [{ type: 'text' as const, text: '{"ok":true}' }],
             structuredContent: { ok: true as const },
@@ -370,10 +417,15 @@ export function makeTools(ctx: { pool: SessionPool }): ToolDef[] {
         outputSchema: { ok: z.literal(true) },
         annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: true },
       },
-      handler: async (args: { account?: string; channel: string; reason?: string }) => {
+      handler: async (args: Record<string, unknown>) => {
         try {
-          const client = await pool.get(args.account);
-          client.part(args.channel, args.reason);
+          const { account, channel, reason } = args as {
+            account?: string;
+            channel: string;
+            reason?: string;
+          };
+          const client = await pool.get(account);
+          client.part(channel, reason);
           return {
             content: [{ type: 'text' as const, text: '{"ok":true}' }],
             structuredContent: { ok: true as const },
@@ -403,10 +455,17 @@ export function makeTools(ctx: { pool: SessionPool }): ToolDef[] {
           openWorldHint: true,
         },
       },
-      handler: async (args: { account?: string; target: string; timestamp: string }) => {
+      handler: async (args: Record<string, unknown>) => {
         try {
-          const client = await pool.get(args.account);
-          client.markRead(args.target, args.timestamp);
+          const { account, target, timestamp } = args as {
+            account?: string;
+            target: string;
+            timestamp: string;
+          };
+          const resolvedAccount = getAccount(account).name;
+          const client = await pool.get(account);
+          client.markRead(target, timestamp);
+          setCursor(resolvedAccount, target, { time: timestamp });
           return {
             content: [{ type: 'text' as const, text: '{"ok":true}' }],
             structuredContent: { ok: true as const },
@@ -433,15 +492,16 @@ export function makeTools(ctx: { pool: SessionPool }): ToolDef[] {
         outputSchema: { ok: z.literal(true) },
         annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: true },
       },
-      handler: async (args: {
-        account?: string;
-        target: string;
-        msgid: string;
-        reason?: string;
-      }) => {
+      handler: async (args: Record<string, unknown>) => {
         try {
-          const client = await pool.get(args.account);
-          client.redact(args.target, args.msgid, args.reason);
+          const { account, target, msgid, reason } = args as {
+            account?: string;
+            target: string;
+            msgid: string;
+            reason?: string;
+          };
+          const client = await pool.get(account);
+          client.redact(target, msgid, reason);
           return {
             content: [{ type: 'text' as const, text: '{"ok":true}' }],
             structuredContent: { ok: true as const },
@@ -463,14 +523,15 @@ export function makeTools(ctx: { pool: SessionPool }): ToolDef[] {
         outputSchema: { sent: z.literal(true) },
         annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: true },
       },
-      handler: async (args: { account?: string; line: string }) => {
+      handler: async (args: Record<string, unknown>) => {
         try {
-          const acc = getAccount(args.account);
+          const { account, line } = args as { account?: string; line: string };
+          const acc = getAccount(account);
           if (acc.allowRaw === false) {
             return errResult(`Error: raw IRC is disabled for account '${acc.name}'`);
           }
-          const client = await pool.get(args.account);
-          client.send(args.line);
+          const client = await pool.get(account);
+          client.send(line);
           return {
             content: [{ type: 'text' as const, text: '{"sent":true}' }],
             structuredContent: { sent: true as const },

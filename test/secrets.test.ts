@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import os from 'node:os';
 import { randomBytes } from 'node:crypto';
-import { setSecret, getSecret, deleteSecret } from '../src/secrets/index';
+import { setSecret, getSecret, deleteSecret, resetBackendCache } from '../src/secrets/index';
 import { redact, Redactor } from '../src/secrets/redactor';
 import { keyFile } from '../src/config/paths';
 
@@ -19,6 +19,7 @@ beforeEach(() => {
   origSecretKey = process.env.IRCV3_MCP_SECRET_KEY;
   process.env.IRCV3_MCP_CONFIG_DIR = tmpDir;
   process.env.IRCV3_MCP_SECRET_BACKEND = 'file';
+  resetBackendCache();
 });
 
 afterEach(() => {
@@ -37,6 +38,7 @@ afterEach(() => {
   } else {
     process.env.IRCV3_MCP_SECRET_KEY = origSecretKey;
   }
+  resetBackendCache();
   rmSync(tmpDir, { recursive: true, force: true });
 });
 

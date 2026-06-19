@@ -5,6 +5,8 @@ import { join, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { SessionPool } from './session';
 import { makeTools } from './tools';
+import { VERSION } from '../version';
+import { log, error } from '../log';
 
 const INSTRUCTIONS = `\
 You are connected to an IRCv3 MCP server that gives you access to IRC networks as a mini IRC client.
@@ -50,13 +52,16 @@ export function loadAgentDocs(dir?: string): AgentDoc[] {
 
 export function buildServer(ctx: { pool: SessionPool; docsDir?: string }): McpServer {
   const server = new McpServer(
-    { name: 'ircv3-mcp', version: '0.1.0' },
+    { name: 'ircv3-mcp', version: VERSION },
     { instructions: INSTRUCTIONS },
   );
 
   const tools = makeTools(ctx);
   for (const { name, config, handler } of tools) {
-    server.registerTool(name, config, handler);
+    // SDK registerTool expects schema-derived arg types; our handler is typed as Record<string,unknown>
+    // which is structurally compatible at runtime — single cast here keeps ToolDef free of `any`.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    server.registerTool(name, config as any, handler as any);
   }
 
   const docs = loadAgentDocs(ctx.docsDir);
@@ -94,6 +99,7 @@ export async function runStdio(): Promise<void> {
   const transport = new StdioServerTransport();
 
   const cleanup = async () => {
+    log('IRCv3 MCP server shutting down');
     await pool.closeAll();
     process.exit(0);
   };
@@ -102,5 +108,10 @@ export async function runStdio(): Promise<void> {
   process.on('SIGTERM', () => void cleanup());
   process.on('beforeExit', () => void cleanup());
 
-  await server.connect(transport);
+  try {
+    await server.connect(transport);
+  } catch (err) {
+    error('Failed to connect MCP transport:', err instanceof Error ? err.message : String(err));
+    process.exit(1);
+  }
 }

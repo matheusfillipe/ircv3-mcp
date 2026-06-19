@@ -20,12 +20,9 @@ export class CapNegotiator extends EventEmitter {
   private lsAccum: Array<[string, string | undefined]> = [];
 
   feed(msg: IrcMessage): void {
-    // params[0]: target (* or nick), params[1]: subcommand
-    // for LS multiline: params[2] may be '*', params[last] is cap list (possibly with leading ':' stripped by parser)
     const sub = msg.params[1]?.toUpperCase();
     const rest = msg.params.slice(2);
 
-    // Determine if there's a '*' multiline indicator and extract cap string
     let isMulti = false;
     let capStr = '';
     if (rest[0] === '*') {
@@ -82,9 +79,5 @@ export class CapNegotiator extends EventEmitter {
 
   static reqLine(names: string[]): string {
     return `CAP REQ :${names.join(' ')}`;
-  }
-
-  reqLine(names: string[]): string {
-    return CapNegotiator.reqLine(names);
   }
 }

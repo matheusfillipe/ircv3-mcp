@@ -87,10 +87,8 @@ export class TlsTransport extends EventEmitter {
 
   private drainLines(): void {
     let pos: number;
-    // Split on \r\n or bare \n
     while ((pos = this.findLineEnd()) !== -1) {
       let line = this.buf.slice(0, pos);
-      // Advance past \r\n or \n
       const after = this.buf[pos] === '\r' ? pos + 2 : pos + 1;
       this.buf = this.buf.slice(after);
       // Strip trailing \r if present (handles \r\n split where \r landed at end of line)

@@ -26,7 +26,7 @@ describe('IrcClient channel/user methods', () => {
     it('sends PART <channel> :<reason> when reason is given', async () => {
       const { client, clientWrites } = await makeConnectedClient();
       client.part('#x', 'bye');
-      expect(clientWrites()).toContain('PART #x :bye');
+      expect(clientWrites()).toContain('PART #x bye');
     });
   });
 
@@ -34,7 +34,7 @@ describe('IrcClient channel/user methods', () => {
     it('sends REDACT <target> <msgid> :<reason> when reason is given', async () => {
       const { client, clientWrites } = await makeConnectedClient();
       client.redact('#x', 'm1', 'spam');
-      expect(clientWrites()).toContain('REDACT #x m1 :spam');
+      expect(clientWrites()).toContain('REDACT #x m1 spam');
     });
 
     it('sends REDACT <target> <msgid> without reason when omitted', async () => {

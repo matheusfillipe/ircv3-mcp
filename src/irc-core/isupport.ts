@@ -37,14 +37,12 @@ export function parseIsupport(tokens: string[]): Isupport {
 
   for (const token of tokens) {
     if (token.startsWith('-')) {
-      // negation — remove from raw, skip population
       continue;
     }
 
     const eqIdx = token.indexOf('=');
     if (eqIdx === -1) {
       raw[token] = true;
-      // bare boolean token — no further processing needed
     } else {
       const key = token.slice(0, eqIdx);
       const value = token.slice(eqIdx + 1);

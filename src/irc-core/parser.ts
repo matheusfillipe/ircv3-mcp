@@ -24,7 +24,6 @@ export function parseSource(raw: string): Source {
 }
 
 export function parseLine(raw: string): IrcMessage {
-  // strip trailing CRLF or LF
   let line = raw;
   if (line.endsWith('\r\n')) line = line.slice(0, -2);
   else if (line.endsWith('\n')) line = line.slice(0, -1);
@@ -70,7 +69,7 @@ export function parseLine(raw: string): IrcMessage {
   return { tags, source, command, params };
 }
 
-export function formatLine(msg: IrcMessage): string {
+export function formatMessage(msg: IrcMessage): string {
   const parts: string[] = [];
 
   if (Object.keys(msg.tags).length > 0) {
@@ -98,7 +97,11 @@ export function formatLine(msg: IrcMessage): string {
     }
   }
 
-  return parts.join(' ') + '\r\n';
+  return parts.join(' ');
+}
+
+export function formatLine(msg: IrcMessage): string {
+  return formatMessage(msg) + '\r\n';
 }
 
 export function byteLenNoTags(msg: IrcMessage): number {

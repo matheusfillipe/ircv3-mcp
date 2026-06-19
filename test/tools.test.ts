@@ -5,20 +5,30 @@ import os from 'node:os';
 import { makeTools } from '../src/mcp/tools';
 import { saveAccount } from '../src/config/store';
 import { AccountConfigSchema } from '../src/config/schema';
+import { getCursor } from '../src/state/cursors';
 import type { SessionPool } from '../src/mcp/session';
 import type { IrcClient } from '../src/irc-core/client';
 import type { HistoryMessage, ReactionIndex } from '../src/irc-core/types';
+import type { ToolResult } from '../src/mcp/tools';
+
+// Helper: cast structuredContent to Record for test assertions.
+function sc(result: ToolResult): Record<string, unknown> {
+  return result.structuredContent as Record<string, unknown>;
+}
 
 let tmpDir: string;
 let origConfigDir: string | undefined;
 let origSecretBackend: string | undefined;
+let origStateDir: string | undefined;
 
 beforeEach(() => {
   tmpDir = mkdtempSync(join(os.tmpdir(), 'ircv3-tools-'));
   origConfigDir = process.env.IRCV3_MCP_CONFIG_DIR;
   origSecretBackend = process.env.IRCV3_MCP_SECRET_BACKEND;
+  origStateDir = process.env.IRCV3_MCP_STATE_DIR;
   process.env.IRCV3_MCP_CONFIG_DIR = tmpDir;
   process.env.IRCV3_MCP_SECRET_BACKEND = 'file';
+  process.env.IRCV3_MCP_STATE_DIR = tmpDir;
   // Save a default account (allowRaw: true) so irc_send_raw lookup succeeds in all tests
   saveAccount(
     AccountConfigSchema.parse({
@@ -41,6 +51,11 @@ afterEach(() => {
     delete process.env.IRCV3_MCP_SECRET_BACKEND;
   } else {
     process.env.IRCV3_MCP_SECRET_BACKEND = origSecretBackend;
+  }
+  if (origStateDir === undefined) {
+    delete process.env.IRCV3_MCP_STATE_DIR;
+  } else {
+    process.env.IRCV3_MCP_STATE_DIR = origStateDir;
   }
   rmSync(tmpDir, { recursive: true, force: true });
 });
@@ -177,8 +192,9 @@ describe('makeTools', () => {
       const tools = makeTools({ pool });
       const t = tools.find((x) => x.name === 'irc_list_networks')!;
       const result = await t.handler({});
-      expect(result.structuredContent.networks).toHaveLength(1);
-      expect(result.structuredContent.networks[0].name).toBe('testnet');
+      const networks = sc(result).networks as Array<{ name: string }>;
+      expect(networks).toHaveLength(1);
+      expect(networks[0].name).toBe('testnet');
       expect(result.content[0].text).toBeTruthy();
     });
   });
@@ -189,10 +205,10 @@ describe('makeTools', () => {
       const tools = makeTools({ pool });
       const t = tools.find((x) => x.name === 'irc_status')!;
       const result = await t.handler({ account: 'testnet' });
-      expect(result.structuredContent.nick).toBe('testnick');
-      expect(result.structuredContent.connected).toBe(true);
-      expect(result.structuredContent.network).toBe('TestNet');
-      expect(Array.isArray(result.structuredContent.caps)).toBe(true);
+      expect(sc(result).nick).toBe('testnick');
+      expect(sc(result).connected).toBe(true);
+      expect(sc(result).network).toBe('TestNet');
+      expect(Array.isArray(sc(result).caps)).toBe(true);
     });
   });
 
@@ -202,8 +218,8 @@ describe('makeTools', () => {
       const tools = makeTools({ pool });
       const t = tools.find((x) => x.name === 'irc_read_history')!;
       const result = await t.handler({ target: '#test' });
-      expect(result.structuredContent.markdown).toBeTruthy();
-      expect(result.structuredContent.markdown).toContain('alice');
+      expect(sc(result).markdown).toBeTruthy();
+      expect(sc(result).markdown).toContain('alice');
       expect(result.content[0].text).toContain('alice');
     });
 
@@ -212,7 +228,7 @@ describe('makeTools', () => {
       const tools = makeTools({ pool });
       const t = tools.find((x) => x.name === 'irc_read_history')!;
       const result = await t.handler({ target: '#test', format: 'both' });
-      expect(result.structuredContent.messages).toHaveLength(2);
+      expect(sc(result).messages).toHaveLength(2);
     });
 
     it('returns only JSON when format is structured', async () => {
@@ -220,7 +236,7 @@ describe('makeTools', () => {
       const tools = makeTools({ pool });
       const t = tools.find((x) => x.name === 'irc_read_history')!;
       const result = await t.handler({ target: '#test', format: 'structured' });
-      expect(result.structuredContent.markdown).toBeUndefined();
+      expect(sc(result).markdown).toBeUndefined();
       expect(() => JSON.parse(result.content[0].text)).not.toThrow();
     });
 
@@ -232,6 +248,16 @@ describe('makeTools', () => {
       expect(result.isError).toBe(true);
       expect(result.content[0].text).toContain('msgid');
     });
+
+    it('persists a cursor for the newest message after reading history', async () => {
+      const { pool } = makePool();
+      const tools = makeTools({ pool });
+      const t = tools.find((x) => x.name === 'irc_read_history')!;
+      await t.handler({ target: '#test' });
+      const cursor = getCursor('default', '#test');
+      expect(cursor?.msgid).toBe('msg2');
+      expect(cursor?.time).toBe('2026-06-19T10:01:00.000Z');
+    });
   });
 
   describe('irc_send_message', () => {
@@ -240,7 +266,7 @@ describe('makeTools', () => {
       const tools = makeTools({ pool });
       const t = tools.find((x) => x.name === 'irc_send_message')!;
       const result = await t.handler({ target: '#test', text: 'hello' });
-      expect(result.structuredContent).toEqual({ msgid: 'm1' });
+      expect(sc(result)).toEqual({ msgid: 'm1' });
     });
 
     it('sends lines array', async () => {
@@ -268,7 +294,7 @@ describe('makeTools', () => {
       const tools = makeTools({ pool });
       const t = tools.find((x) => x.name === 'irc_react')!;
       const result = await t.handler({ target: '#test', msgid: 'msg1', emoji: '👋' });
-      expect(result.structuredContent).toEqual({ ok: true });
+      expect(sc(result)).toEqual({ ok: true });
       expect(client.react).toHaveBeenCalledWith({
         target: '#test',
         msgid: 'msg1',
@@ -284,7 +310,7 @@ describe('makeTools', () => {
       const tools = makeTools({ pool });
       const t = tools.find((x) => x.name === 'irc_redact')!;
       const result = await t.handler({ target: '#test', msgid: 'msg1', reason: 'spam' });
-      expect(result.structuredContent).toEqual({ ok: true });
+      expect(sc(result)).toEqual({ ok: true });
       expect(client.redact).toHaveBeenCalledWith('#test', 'msg1', 'spam');
     });
   });
@@ -295,7 +321,7 @@ describe('makeTools', () => {
       const tools = makeTools({ pool });
       const t = tools.find((x) => x.name === 'irc_send_raw')!;
       const result = await t.handler({ account: 'default', line: 'PING :server' });
-      expect(result.structuredContent).toEqual({ sent: true });
+      expect(sc(result)).toEqual({ sent: true });
       expect(client.send).toHaveBeenCalledWith('PING :server');
     });
 
@@ -324,8 +350,9 @@ describe('makeTools', () => {
       const tools = makeTools({ pool });
       const t = tools.find((x) => x.name === 'irc_list_members')!;
       const result = await t.handler({ channel: '#test' });
-      expect(result.structuredContent.members).toHaveLength(2);
-      expect(result.structuredContent.members[0].nick).toBe('alice');
+      const members = sc(result).members as Array<{ nick: string }>;
+      expect(members).toHaveLength(2);
+      expect(members[0].nick).toBe('alice');
     });
   });
 
@@ -335,8 +362,8 @@ describe('makeTools', () => {
       const tools = makeTools({ pool });
       const t = tools.find((x) => x.name === 'irc_whois')!;
       const result = await t.handler({ nick: 'alice' });
-      expect(result.structuredContent.nick).toBe('alice');
-      expect(result.structuredContent.account).toBe('alice_acct');
+      expect(sc(result).nick).toBe('alice');
+      expect(sc(result).account).toBe('alice_acct');
     });
   });
 
@@ -346,7 +373,7 @@ describe('makeTools', () => {
       const tools = makeTools({ pool });
       const t = tools.find((x) => x.name === 'irc_join')!;
       const result = await t.handler({ channel: '#newchan' });
-      expect(result.structuredContent).toEqual({ ok: true });
+      expect(sc(result)).toEqual({ ok: true });
       expect(client.join).toHaveBeenCalledWith('#newchan', undefined);
     });
   });
@@ -357,7 +384,7 @@ describe('makeTools', () => {
       const tools = makeTools({ pool });
       const t = tools.find((x) => x.name === 'irc_part')!;
       const result = await t.handler({ channel: '#test', reason: 'bye' });
-      expect(result.structuredContent).toEqual({ ok: true });
+      expect(sc(result)).toEqual({ ok: true });
       expect(client.part).toHaveBeenCalledWith('#test', 'bye');
     });
   });
@@ -368,8 +395,17 @@ describe('makeTools', () => {
       const tools = makeTools({ pool });
       const t = tools.find((x) => x.name === 'irc_mark_read')!;
       const result = await t.handler({ target: '#test', timestamp: '2026-06-19T10:01:00.000Z' });
-      expect(result.structuredContent).toEqual({ ok: true });
+      expect(sc(result)).toEqual({ ok: true });
       expect(client.markRead).toHaveBeenCalledWith('#test', '2026-06-19T10:01:00.000Z');
+    });
+
+    it('persists a cursor that getCursor returns', async () => {
+      const { pool } = makePool();
+      const tools = makeTools({ pool });
+      const t = tools.find((x) => x.name === 'irc_mark_read')!;
+      await t.handler({ target: '#cursorchan', timestamp: '2026-06-19T12:00:00.000Z' });
+      const cursor = getCursor('default', '#cursorchan');
+      expect(cursor?.time).toBe('2026-06-19T12:00:00.000Z');
     });
   });
 
@@ -379,8 +415,9 @@ describe('makeTools', () => {
       const tools = makeTools({ pool });
       const t = tools.find((x) => x.name === 'irc_list_conversations')!;
       const result = await t.handler({});
-      expect(result.structuredContent.conversations).toHaveLength(1);
-      expect(result.structuredContent.conversations[0].target).toBe('#test');
+      const conversations = sc(result).conversations as Array<{ target: string }>;
+      expect(conversations).toHaveLength(1);
+      expect(conversations[0].target).toBe('#test');
     });
   });
 

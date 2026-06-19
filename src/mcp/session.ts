@@ -2,11 +2,13 @@ import { IrcClient } from '../irc-core/client';
 import type { IrcClientOptions } from '../irc-core/client';
 import { getAccount, listAccounts } from '../config/store';
 import { getSecret } from '../secrets/index';
+import { addSecret } from '../log';
 import type { AccountConfig } from '../config/schema';
 
 export type ConnectFn = (acc: AccountConfig, password: string | null) => Promise<IrcClient>;
 
 const defaultConnect: ConnectFn = async (acc, password) => {
+  if (password) addSecret(password);
   const opts: IrcClientOptions = {
     host: acc.host,
     port: acc.port,

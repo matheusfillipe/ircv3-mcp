@@ -1,7 +1,7 @@
 import { EventEmitter } from 'events';
 import { randomBytes } from 'crypto';
 import { TlsTransport } from './transport';
-import { parseLine, formatLine } from './parser';
+import { parseLine, formatMessage } from './parser';
 import { CapNegotiator } from './caps';
 import { parseIsupport } from './isupport';
 import { BatchTracker } from './batch';
@@ -13,6 +13,7 @@ import { chunkAuthenticate } from './sasl/chunk';
 import { ScramSha256 } from './sasl/scram';
 import { buildChathistory, buildTargets, clampLimit } from './chathistory';
 import { nameEquals } from './casemap';
+import { NUMERICS } from './numerics';
 import type { IrcMessage, Isupport, SaslMech, Tags, HistoryMessage, ReactionIndex } from './types';
 import type { HistoryMode, Selector } from './chathistory';
 
@@ -29,6 +30,19 @@ export interface IrcClientOptions {
   desiredCaps?: string[];
   socketFactory?: Parameters<TlsTransport['connect']>[1];
 }
+
+const WHOIS_NUMERICS = new Set([
+  NUMERICS.RPL_WHOISUSER,
+  NUMERICS.RPL_ENDOFWHOIS,
+  NUMERICS.RPL_WHOISCHANNELS,
+  NUMERICS.RPL_WHOISACCOUNT,
+  '312',
+  '313',
+  '317',
+  '338',
+]);
+
+const DEFAULT_BATCH_TYPES = ['chathistory'];
 
 const DEFAULT_DESIRED_CAPS = [
   'message-tags',
@@ -124,7 +138,6 @@ export class IrcClient extends EventEmitter {
             this.emit('error', err);
           });
 
-          // Begin capability negotiation and registration
           this.write('CAP LS 302');
           this.write(`NICK ${this.opts.nick}`);
           const username = this.opts.username ?? this.opts.nick;
@@ -134,7 +147,7 @@ export class IrcClient extends EventEmitter {
           this.caps.on('ls', (available: Map<string, string | undefined>) => {
             const requested = desiredCaps.filter((c) => available.has(c));
             if (requested.length > 0) {
-              this.write(this.caps.reqLine(requested));
+              this.write(CapNegotiator.reqLine(requested));
             } else {
               this.write('CAP END');
             }
@@ -168,7 +181,6 @@ export class IrcClient extends EventEmitter {
   private handleAuthenticate(msg: IrcMessage, finish: (err?: Error) => void): void {
     const sasl = this.opts.sasl!;
     const mech = sasl.mech;
-    // Server sends AUTHENTICATE + (empty challenge) or AUTHENTICATE <base64>
     const challenge = msg.params[0] ?? '+';
 
     let response: string;
@@ -182,20 +194,17 @@ export class IrcClient extends EventEmitter {
         this.scram = new ScramSha256(sasl.account, sasl.password);
       }
       if (challenge === '+') {
-        // Send client-first as base64
         const plaintext = this.scram.clientFirst();
         response = Buffer.from(plaintext, 'utf8').toString('base64');
       } else {
         const decoded = Buffer.from(challenge, 'base64').toString('utf8');
         if (decoded.includes('v=')) {
-          // Server-final: verify server signature before completing auth
           if (!this.scram.serverSignatureValid(decoded)) {
             finish(new Error('SCRAM: server signature verification failed'));
             return;
           }
           response = '+';
         } else {
-          // Server-first: compute and send client-final
           const plaintext = this.scram.clientFinal(decoded);
           response = Buffer.from(plaintext, 'utf8').toString('base64');
         }
@@ -216,20 +225,17 @@ export class IrcClient extends EventEmitter {
 
     this.emit('message', msg);
 
-    // PING handling
     if (command === 'PING') {
       const token = params[0] ?? '';
       this.write(`PONG :${token}`);
       return;
     }
 
-    // CAP negotiation
     if (command === 'CAP') {
       this.caps.feed(msg);
       return;
     }
 
-    // AUTHENTICATE (SASL challenge)
     if (command === 'AUTHENTICATE') {
       if (this.opts.sasl) {
         this.handleAuthenticate(msg, finish);
@@ -237,32 +243,31 @@ export class IrcClient extends EventEmitter {
       return;
     }
 
-    // SASL success numerics
-    if (command === '900' || command === '903') {
-      if (command === '903') {
-        // RPL_SASLSUCCESS — end capability negotiation
+    if (command === NUMERICS.RPL_LOGGEDIN || command === NUMERICS.RPL_SASLSUCCESS) {
+      if (command === NUMERICS.RPL_SASLSUCCESS) {
         this.write('CAP END');
       }
       return;
     }
 
-    // SASL failure numerics
-    if (command === '902' || command === '904' || command === '905' || command === '906') {
+    if (
+      command === NUMERICS.ERR_NICKLOCKED ||
+      command === NUMERICS.ERR_SASLFAIL ||
+      command === NUMERICS.ERR_SASLTOOLONG ||
+      command === NUMERICS.ERR_SASLABORTED
+    ) {
       finish(new Error(`SASL authentication failed: ${command} ${params.join(' ')}`));
       return;
     }
 
-    // RPL_ISUPPORT (005)
-    if (command === '005') {
-      // params[0] is the nick, params[last] is the human-readable description
+    if (command === NUMERICS.RPL_ISUPPORT) {
       const tokens = params.slice(1, -1);
       const parsed = parseIsupport(tokens);
       this.mergeIsupport(parsed);
       return;
     }
 
-    // RPL_WELCOME (001) — registration complete
-    if (command === '001') {
+    if (command === NUMERICS.RPL_WELCOME) {
       this.connected = true;
       if (this.isupport.bot) {
         this.write(`MODE ${this.nick} +${this.isupport.bot}`);
@@ -274,28 +279,23 @@ export class IrcClient extends EventEmitter {
       return;
     }
 
-    // BATCH handling
     if (command === 'BATCH') {
       const sigil = params[0]?.[0];
       const ref = params[0]?.slice(1) ?? '';
 
       if (sigil === '+') {
-        // BATCH open
         const batchType = params[1] ?? '';
         const batchParams = params.slice(2);
         const batchTags = msg.tags;
 
-        // If this BATCH open itself carries a batch tag, add it to the parent
         if (msg.tags['batch'] !== undefined) {
           this.batches.add(msg);
         }
 
         this.batches.open(ref, batchType, batchParams, batchTags);
       } else if (sigil === '-') {
-        // BATCH close
         const batchData = this.batches.close(ref);
         if (batchData) {
-          // Check if this batch is tracked via labeled-response
           const label = batchData.tags['label'];
           if (label && this.labels.has(label)) {
             this.labels.resolve(label, batchData.messages);
@@ -306,7 +306,6 @@ export class IrcClient extends EventEmitter {
       return;
     }
 
-    // Route messages that belong to an open batch
     if (msg.tags['batch'] !== undefined) {
       if (this.batches.add(msg)) {
         // Contained in a batch — also emit as message but don't do further routing
@@ -408,9 +407,7 @@ export class IrcClient extends EventEmitter {
 
   sendCommand(command: string, params: string[], tags?: Tags): void {
     const msg: IrcMessage = { tags: tags ?? {}, command, params };
-    const line = formatLine(msg);
-    // formatLine appends \r\n, strip it for transport.write (which adds its own)
-    this.transport.write(line.replace(/\r\n$/, ''));
+    this.transport.write(formatMessage(msg));
   }
 
   request(
@@ -485,7 +482,6 @@ export class IrcClient extends EventEmitter {
       return {};
     }
 
-    // Multi-line path
     if (hasMultiline) {
       const ref = randomBytes(8)
         .toString('base64url')
@@ -500,7 +496,6 @@ export class IrcClient extends EventEmitter {
       return {};
     }
 
-    // Fallback: send each line individually
     for (let i = 0; i < lines.length; i++) {
       const tags: Tags = i === 0 ? { ...replyTags } : {};
       this.sendCommand(
@@ -570,7 +565,6 @@ export class IrcClient extends EventEmitter {
       if (mode !== 'latest' && mode !== 'before') break;
       if (pageMsgs.length < pageLimit) break;
 
-      // Sort the page ascending to find the oldest message, then fetch BEFORE it
       const sorted = [...pageMsgs].sort((a, b) => {
         if (a.time && b.time && a.time !== b.time) return a.time < b.time ? -1 : 1;
         if (a.msgid && b.msgid && a.msgid !== b.msgid) return a.msgid < b.msgid ? -1 : 1;
@@ -582,7 +576,6 @@ export class IrcClient extends EventEmitter {
       currentMode = 'before';
     }
 
-    // Sort ascending by time, then msgid
     collected.sort((a, b) => {
       if (a.time && b.time && a.time !== b.time) return a.time < b.time ? -1 : 1;
       if (a.msgid && b.msgid && a.msgid !== b.msgid) return a.msgid < b.msgid ? -1 : 1;
@@ -644,8 +637,7 @@ export class IrcClient extends EventEmitter {
     batchTypes?: string[],
   ): Promise<HistoryMessage[]> {
     return new Promise<HistoryMessage[]>((resolve, reject) => {
-      const defaultTypes = ['chathistory'];
-      const types = batchTypes ?? defaultTypes;
+      const types = batchTypes ?? DEFAULT_BATCH_TYPES;
 
       const timer = setTimeout(() => {
         this.off('batch', onBatch);
@@ -707,18 +699,15 @@ export class IrcClient extends EventEmitter {
   }
 
   join(channel: string, key?: string): void {
-    const line = key ? `JOIN ${channel} ${key}` : `JOIN ${channel}`;
-    this.write(line);
+    this.sendCommand('JOIN', key ? [channel, key] : [channel]);
   }
 
   part(channel: string, reason?: string): void {
-    const line = reason ? `PART ${channel} :${reason}` : `PART ${channel}`;
-    this.write(line);
+    this.sendCommand('PART', reason ? [channel, reason] : [channel]);
   }
 
   redact(target: string, msgid: string, reason?: string): void {
-    const line = reason ? `REDACT ${target} ${msgid} :${reason}` : `REDACT ${target} ${msgid}`;
-    this.write(line);
+    this.sendCommand('REDACT', reason ? [target, msgid, reason] : [target, msgid]);
   }
 
   listMembers(
@@ -737,20 +726,18 @@ export class IrcClient extends EventEmitter {
       }, timeoutMs);
 
       const onMessage = (msg: IrcMessage) => {
-        if (msg.command === '353') {
-          // params: [me, chanType, channel, :member list]
+        if (msg.command === NUMERICS.RPL_NAMREPLY) {
           const chanParam = msg.params[2];
           if (chanParam?.toLowerCase() !== channel.toLowerCase()) return;
           const trailing = msg.params[msg.params.length - 1] ?? '';
           for (const entry of trailing.split(' ')) {
             if (!entry) continue;
-            // Strip userhost-in-names suffix (nick!user@host) — keep only nick portion
             const nickPart = entry.split('!')[0]!;
             let i = 0;
             while (i < nickPart.length && prefixSymbols.has(nickPart[i]!)) i++;
             members.push({ nick: nickPart.slice(i), prefixes: nickPart.slice(0, i) });
           }
-        } else if (msg.command === '366') {
+        } else if (msg.command === NUMERICS.RPL_ENDOFNAMES) {
           const chanParam = msg.params[1];
           if (chanParam?.toLowerCase() !== channel.toLowerCase()) return;
           clearTimeout(timer);
@@ -760,7 +747,7 @@ export class IrcClient extends EventEmitter {
       };
 
       this.on('message', onMessage);
-      this.write(`NAMES ${channel}`);
+      this.sendCommand('NAMES', [channel]);
     });
   }
 
@@ -786,25 +773,20 @@ export class IrcClient extends EventEmitter {
       }, timeoutMs);
 
       const onMessage = (msg: IrcMessage) => {
-        const whoisNumerics = new Set(['311', '318', '319', '330', '312', '313', '317', '338']);
-        if (!whoisNumerics.has(msg.command)) return;
+        if (!WHOIS_NUMERICS.has(msg.command)) return;
 
         const trailing = msg.params[msg.params.length - 1] ?? '';
 
-        if (msg.command === '311') {
-          // RPL_WHOISUSER: params = [me, nick, user, host, *, :realname]
+        if (msg.command === NUMERICS.RPL_WHOISUSER) {
           realname = trailing;
           lines.push(trailing);
-        } else if (msg.command === '330') {
-          // RPL_WHOISACCOUNT: params = [me, nick, account, :is logged in as]
+        } else if (msg.command === NUMERICS.RPL_WHOISACCOUNT) {
           account = msg.params[2];
           lines.push(trailing);
-        } else if (msg.command === '319') {
-          // RPL_WHOISCHANNELS: params = [me, nick, :channels]
+        } else if (msg.command === NUMERICS.RPL_WHOISCHANNELS) {
           channels = trailing;
           lines.push(trailing);
-        } else if (msg.command === '318') {
-          // RPL_ENDOFWHOIS
+        } else if (msg.command === NUMERICS.RPL_ENDOFWHOIS) {
           clearTimeout(timer);
           this.off('message', onMessage);
           resolve({ nick, account, realname, channels, lines });
@@ -824,7 +806,6 @@ export class IrcClient extends EventEmitter {
     return new Promise<void>((resolve) => {
       const done = () => resolve();
       this.transport.once('close', done);
-      // Resolve after a short timeout to avoid hanging if close never fires
       setTimeout(() => {
         this.transport.off('close', done);
         resolve();
