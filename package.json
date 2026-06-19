@@ -31,7 +31,8 @@
     "format": "prettier --write .",
     "test": "vitest run",
     "test:watch": "vitest",
-    "ci": "npm run typecheck && npm run lint && npm run test && npm run build"
+    "ci": "npm run typecheck && npm run lint && npm run test && npm run build",
+    "prepublishOnly": "npm run build"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",
