@@ -84,3 +84,20 @@ export interface Reaction {
 
 /** Map of parent msgid -> reactions on it. */
 export type ReactionIndex = Map<string, Reaction[]>;
+
+/** A buffered live protocol event, for the recent-events watch buffer. */
+export interface EventRecord {
+  /** Monotonic sequence number, unique per connection. */
+  seq: number;
+  /** ISO-8601 timestamp (server-time when present, else receipt time). */
+  time: string;
+  /** Lowercased command (privmsg, notice, join, part, quit, nick, mode, topic, tagmsg, ...). */
+  kind: string;
+  target?: string;
+  nick?: string;
+  account?: string;
+  text?: string;
+  msgid?: string;
+  /** The raw IRC line (without CRLF) for inspection. */
+  raw: string;
+}

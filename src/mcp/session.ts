@@ -64,15 +64,18 @@ export class SessionPool {
     host: string;
     default: boolean;
     connected: boolean;
+    state: 'connected' | 'idle';
     nick?: string;
   }> {
     return listAccounts().map((acc) => {
       const client = this.cache.get(acc.name);
+      const connected = client?.connected ?? false;
       return {
         name: acc.name,
         host: acc.host,
         default: acc.default === true,
-        connected: client?.connected ?? false,
+        connected,
+        state: connected ? 'connected' : 'idle',
         nick: client?.nick,
       };
     });

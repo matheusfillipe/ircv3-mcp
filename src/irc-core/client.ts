@@ -14,7 +14,15 @@ import { ScramSha256 } from './sasl/scram';
 import { buildChathistory, buildTargets, clampLimit } from './chathistory';
 import { nameEquals } from './casemap';
 import { NUMERICS } from './numerics';
-import type { IrcMessage, Isupport, SaslMech, Tags, HistoryMessage, ReactionIndex } from './types';
+import type {
+  IrcMessage,
+  Isupport,
+  SaslMech,
+  Tags,
+  HistoryMessage,
+  ReactionIndex,
+  EventRecord,
+} from './types';
 import type { HistoryMode, Selector } from './chathistory';
 
 export interface IrcClientOptions {
@@ -28,8 +36,11 @@ export interface IrcClientOptions {
   sasl?: { mech: SaslMech; account: string; password: string } | null;
   channels?: string[];
   desiredCaps?: string[];
+  eventBufferSize?: number;
   socketFactory?: Parameters<TlsTransport['connect']>[1];
 }
+
+const EVENT_NOISE = new Set(['PING', 'PONG', 'CAP', 'AUTHENTICATE']);
 
 const WHOIS_NUMERICS = new Set([
   NUMERICS.RPL_WHOISUSER,
@@ -77,6 +88,10 @@ export class IrcClient extends EventEmitter {
   /** Aggregated reactions keyed by the parent message's msgid. */
   reactions: ReactionIndex = new Map();
 
+  private events: EventRecord[] = [];
+  private eventSeq = 0;
+  private maxEvents: number;
+
   private opts: IrcClientOptions;
   private transport: TlsTransport;
   private caps: CapNegotiator;
@@ -89,6 +104,7 @@ export class IrcClient extends EventEmitter {
   constructor(opts: IrcClientOptions) {
     super();
     this.opts = opts;
+    this.maxEvents = opts.eventBufferSize ?? 2000;
     this.nick = opts.nick;
     this.connected = false;
     this.enabledCaps = new Set();
@@ -224,6 +240,7 @@ export class IrcClient extends EventEmitter {
     const { command, params } = msg;
 
     this.emit('message', msg);
+    this.recordEvent(msg);
 
     if (command === 'PING') {
       const token = params[0] ?? '';
@@ -552,6 +569,59 @@ export class IrcClient extends EventEmitter {
       }, timeoutMs);
       this.on('batch', onBatch);
     });
+  }
+
+  private recordEvent(msg: IrcMessage): void {
+    if (EVENT_NOISE.has(msg.command)) return;
+    const isText = msg.command === 'PRIVMSG' || msg.command === 'NOTICE';
+    const rec: EventRecord = {
+      seq: ++this.eventSeq,
+      time: msg.tags['time'] ?? new Date().toISOString(),
+      kind: msg.command.toLowerCase(),
+      target: msg.params[0],
+      nick: msg.source?.nick,
+      account: msg.tags['account'],
+      text: isText ? msg.params[msg.params.length - 1] : undefined,
+      msgid: msg.tags['msgid'],
+      raw: formatMessage(msg).replace(/\r\n$/, ''),
+    };
+    this.events.push(rec);
+    if (this.events.length > this.maxEvents) {
+      this.events.splice(0, this.events.length - this.maxEvents);
+    }
+  }
+
+  /** Highest event sequence number seen so far (0 when none). */
+  lastEventSeq(): number {
+    return this.eventSeq;
+  }
+
+  /**
+   * Return buffered live events, newest last. Filter by target, kind, and a
+   * `sinceSeq` cursor (events strictly after it) for polling/"watch" usage.
+   */
+  recentEvents(opts: {
+    sinceSeq?: number;
+    target?: string;
+    kinds?: string[];
+    limit?: number;
+  }): EventRecord[] {
+    let evs = this.events;
+    if (opts.sinceSeq !== undefined) {
+      evs = evs.filter((e) => e.seq > opts.sinceSeq!);
+    }
+    if (opts.target) {
+      evs = evs.filter(
+        (e) =>
+          e.target !== undefined && nameEquals(e.target, opts.target!, this.isupport.casemapping),
+      );
+    }
+    if (opts.kinds && opts.kinds.length > 0) {
+      const set = new Set(opts.kinds.map((k) => k.toLowerCase()));
+      evs = evs.filter((e) => set.has(e.kind));
+    }
+    const limit = opts.limit ?? 50;
+    return evs.slice(-limit);
   }
 
   /**

@@ -110,7 +110,19 @@ function makePool(overrides: Partial<IrcClient> = {}): { pool: SessionPool; clie
       realname: 'Alice',
       lines: ['Alice'],
     }),
-    sendMessage: vi.fn().mockResolvedValue({ msgid: 'm1' }),
+    sendMessage: vi.fn().mockResolvedValue({ ok: true, msgid: 'm1' }),
+    recentEvents: vi.fn().mockReturnValue([
+      {
+        seq: 1,
+        time: '2026-06-19T10:00:00.000Z',
+        kind: 'privmsg',
+        target: '#test',
+        nick: 'alice',
+        text: 'hi',
+        raw: ':alice PRIVMSG #test :hi',
+      },
+    ]),
+    lastEventSeq: vi.fn().mockReturnValue(1),
     react: vi.fn().mockResolvedValue(undefined),
     join: vi.fn(),
     part: vi.fn(),
@@ -145,6 +157,7 @@ describe('makeTools', () => {
     expect(names).toContain('irc_list_conversations');
     expect(names).toContain('irc_list_members');
     expect(names).toContain('irc_whois');
+    expect(names).toContain('irc_recent_events');
     expect(names).toContain('irc_send_message');
     expect(names).toContain('irc_react');
     expect(names).toContain('irc_join');
@@ -165,6 +178,7 @@ describe('makeTools', () => {
         'irc_list_conversations',
         'irc_list_members',
         'irc_whois',
+        'irc_recent_events',
       ]) {
         const t = tools.find((x) => x.name === name)!;
         expect(t.config.annotations?.readOnlyHint, `${name} readOnlyHint`).toBe(true);
@@ -196,6 +210,18 @@ describe('makeTools', () => {
       expect(networks).toHaveLength(1);
       expect(networks[0].name).toBe('testnet');
       expect(result.content[0].text).toBeTruthy();
+    });
+  });
+
+  describe('irc_recent_events', () => {
+    it('returns buffered events and a cursor', async () => {
+      const { pool } = makePool();
+      const tools = makeTools({ pool });
+      const t = tools.find((x) => x.name === 'irc_recent_events')!;
+      const result = await t.handler({ target: '#test', since_seq: 0 });
+      const out = sc(result) as { events: unknown[]; cursor: number };
+      expect(out.events).toHaveLength(1);
+      expect(out.cursor).toBe(1);
     });
   });
 
@@ -266,7 +292,7 @@ describe('makeTools', () => {
       const tools = makeTools({ pool });
       const t = tools.find((x) => x.name === 'irc_send_message')!;
       const result = await t.handler({ target: '#test', text: 'hello' });
-      expect(sc(result)).toEqual({ msgid: 'm1' });
+      expect(sc(result)).toEqual({ ok: true, msgid: 'm1' });
     });
 
     it('sends lines array', async () => {

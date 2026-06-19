@@ -37,7 +37,8 @@ export function makeTools(ctx: { pool: SessionPool }): ToolDef[] {
       name: 'irc_list_networks',
       config: {
         title: 'List IRC networks',
-        description: 'List all configured IRC networks and their connection status.',
+        description:
+          'List configured IRC networks. Each has a state: "connected" (live this session) or "idle" (configured but not connected yet). Idle is normal and not an error — an account connects automatically the first time you use any tool on it. Just use the tools; do not treat idle as a failure.',
         inputSchema: {},
         outputSchema: {
           networks: z.array(
@@ -45,6 +46,7 @@ export function makeTools(ctx: { pool: SessionPool }): ToolDef[] {
               name: z.string(),
               host: z.string(),
               default: z.boolean(),
+              state: z.enum(['connected', 'idle']),
               connected: z.boolean(),
               nick: z.string().optional(),
             }),
@@ -267,6 +269,49 @@ export function makeTools(ctx: { pool: SessionPool }): ToolDef[] {
           const { account, nick } = args as { account?: string; nick: string };
           const client = await pool.get(account);
           const result = await client.whois(nick);
+          return {
+            content: [{ type: 'text' as const, text: JSON.stringify(result) }],
+            structuredContent: result,
+          };
+        } catch (e) {
+          if (e instanceof Error) return errResult('Error: ' + e.message);
+          throw e;
+        }
+      },
+    },
+
+    {
+      name: 'irc_recent_events',
+      config: {
+        title: 'Recent live IRC events',
+        description:
+          'Return recent live IRC events buffered since this session connected: messages, joins/parts/quits, nick/topic/mode changes, and reaction TAGMSGs. To watch for new activity, poll this tool with since_seq set to the cursor returned by the previous call — you get only events after it. Filter by target (a channel or nick) and kinds. This is the live in-memory buffer; for older server-side history use irc_read_history.',
+        inputSchema: {
+          account: z.string().optional(),
+          target: z.string().optional(),
+          since_seq: z.number().int().nonnegative().optional(),
+          kinds: z.array(z.string()).optional(),
+          limit: z.number().int().positive().optional(),
+        },
+        outputSchema: {
+          events: z.array(z.unknown()),
+          cursor: z.number(),
+        },
+        annotations: { readOnlyHint: true, openWorldHint: true },
+      },
+      handler: async (args: Record<string, unknown>) => {
+        try {
+          const { account, target, since_seq, kinds, limit } = args as {
+            account?: string;
+            target?: string;
+            since_seq?: number;
+            kinds?: string[];
+            limit?: number;
+          };
+          const client = await pool.get(account);
+          const events = client.recentEvents({ sinceSeq: since_seq, target, kinds, limit });
+          const cursor = client.lastEventSeq();
+          const result = { events, cursor };
           return {
             content: [{ type: 'text' as const, text: JSON.stringify(result) }],
             structuredContent: result,

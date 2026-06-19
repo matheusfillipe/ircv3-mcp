@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.7] - 2026-06-19
+
+### Added
+
+- `irc_recent_events` tool: a live in-session event buffer (messages, joins/parts/quits,
+  nick/topic/mode changes, reaction TAGMSGs) with raw lines. Poll with `since_seq` (the
+  returned cursor) to watch only new activity; filter by `target` and `kinds`.
+
+### Changed
+
+- `irc_list_networks` reports a `state` of "connected" or "idle". Idle means configured but
+  not connected yet — it connects automatically on first use, so an unused account no longer
+  reads as an error.
+
 ## [0.1.6] - 2026-06-19
 
 ### Fixed
