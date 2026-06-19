@@ -224,13 +224,13 @@ async function cmdConfigure(deps: CmdDeps = {}): Promise<number> {
 
   const askMasked = (q: string): Promise<string> =>
     new Promise((res) => {
-      // Suppress echoing by suppressing the output stream temporarily.
-      const output = (rl as unknown as { output: NodeJS.WriteStream }).output;
-      process.stdout.write(q);
-      output.write = () => true;
+      const stdout = process.stdout;
+      const originalWrite = stdout.write.bind(stdout);
+      originalWrite(q);
+      stdout.write = () => true;
       rl.once('line', (ans: string) => {
-        output.write = process.stdout.write.bind(process.stdout);
-        process.stdout.write('\n');
+        stdout.write = originalWrite;
+        originalWrite('\n');
         res(ans);
       });
     });
@@ -301,6 +301,7 @@ async function cmdConfigure(deps: CmdDeps = {}): Promise<number> {
       allowRaw: true,
     };
 
+    process.stdout.write('Saving account...\n');
     try {
       saveAccount(acc);
     } catch (e) {
@@ -308,7 +309,13 @@ async function cmdConfigure(deps: CmdDeps = {}): Promise<number> {
       return 1;
     }
     if (password && saslConfig) {
-      setSecret(name, password);
+      process.stdout.write('Storing password in the system keychain...\n');
+      try {
+        setSecret(name, password);
+      } catch (e) {
+        err(`configure: could not store password: ${e instanceof Error ? e.message : String(e)}\n`);
+        return 1;
+      }
     }
     process.stdout.write(`Account '${name}' configured.\n`);
     return 0;

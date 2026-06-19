@@ -334,7 +334,7 @@ export class IrcClient extends EventEmitter {
    */
   private handleReaction(msg: IrcMessage): void {
     if (msg.command !== 'TAGMSG') return;
-    const parentMsgid = msg.tags['+reply'];
+    const parentMsgid = msg.tags['+reply'] ?? msg.tags['+draft/reply'];
     if (!parentMsgid) return;
 
     const reactEmoji = msg.tags['+draft/react'];
@@ -443,7 +443,7 @@ export class IrcClient extends EventEmitter {
       account: msg.tags['account'],
       kind,
       text: msg.params[msg.params.length - 1],
-      replyTo: msg.tags['+reply'],
+      replyTo: msg.tags['+reply'] ?? msg.tags['+draft/reply'],
     };
   }
 
@@ -459,7 +459,7 @@ export class IrcClient extends EventEmitter {
   }): Promise<{ msgid?: string }> {
     const { target, lines, notice = false, inReplyTo } = opts;
     const command = notice ? 'NOTICE' : 'PRIVMSG';
-    const replyTags: Tags = inReplyTo ? { '+reply': inReplyTo } : {};
+    const replyTags: Tags = inReplyTo ? { '+reply': inReplyTo, '+draft/reply': inReplyTo } : {};
 
     if (lines.length === 0) return {};
 
@@ -612,6 +612,7 @@ export class IrcClient extends EventEmitter {
     const { target, msgid, emoji, remove = false } = opts;
     const tags: Tags = {
       '+reply': msgid,
+      '+draft/reply': msgid,
       [remove ? '+draft/unreact' : '+draft/react']: emoji,
     };
     this.sendCommand('TAGMSG', [target], tags);
