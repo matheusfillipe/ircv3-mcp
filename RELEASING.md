@@ -65,12 +65,16 @@ guarded to run only on tag pushes.
 
 ## Using the published package
 
-```sh
-# Run directly
-npx -y ircv3-mcp --help
+Run on demand, always the latest version:
 
-# Add to Claude Code over stdio
-claude mcp add ircv3-mcp -- npx -y ircv3-mcp
+```sh
+npx -y ircv3-mcp@latest --help
+```
+
+Register with Claude Code over stdio:
+
+```sh
+claude mcp add ircv3-mcp -- npx -y ircv3-mcp@latest
 ```
 
 Or pin it in a project's `.mcp.json`:
@@ -80,7 +84,7 @@ Or pin it in a project's `.mcp.json`:
   "mcpServers": {
     "ircv3-mcp": {
       "command": "npx",
-      "args": ["-y", "ircv3-mcp"]
+      "args": ["-y", "ircv3-mcp@latest"]
     }
   }
 }

@@ -1,6 +1,6 @@
 {
   "name": "ircv3-mcp",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "An IRCv3 MCP server: a mini IRC client for agents.",
   "type": "module",
   "license": "MIT",

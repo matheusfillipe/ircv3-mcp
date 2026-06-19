@@ -7,27 +7,30 @@ tools backed by a full IRCv3 connection with SASL authentication.
 
 ## Install
 
-Requires Node >= 20.
+Requires Node >= 20. Nothing to install — everything runs through `npx` and always pulls the
+latest published version.
 
-Run on demand with npx (no global install needed):
-
-```sh
-npx -y ircv3-mcp
-```
-
-Register with Claude Code:
+Register with Claude Code (this is all most users need):
 
 ```sh
-claude mcp add ircv3-mcp -- npx -y ircv3-mcp
+claude mcp add ircv3-mcp -- npx -y ircv3-mcp@latest
 ```
 
 ## Quickstart
 
-Add an account. The example below connects to Libera.Chat with SASL PLAIN and reads the
-password from stdin so it never appears in shell history:
+Configure an account with the interactive wizard — run through npx, nothing to install:
 
 ```sh
-echo 'hunter2' | ircv3-mcp add-account libera \
+npx -y ircv3-mcp@latest configure
+```
+
+It prompts for host, nick, SASL mechanism (one of PLAIN, EXTERNAL, or SCRAM-SHA-256), and a
+hidden password, and stores the password in your OS keychain.
+
+Prefer a one-liner? `add-account` reads the password from stdin so it never hits shell history:
+
+```sh
+echo 'hunter2' | npx -y ircv3-mcp@latest add-account libera \
   --host irc.libera.chat \
   --nick mybot \
   --sasl PLAIN \
@@ -37,20 +40,18 @@ echo 'hunter2' | ircv3-mcp add-account libera \
   --password-stdin
 ```
 
-Or run the interactive wizard:
-
-```sh
-ircv3-mcp configure
-```
-
 Verify connectivity:
 
 ```sh
-ircv3-mcp test libera
+npx -y ircv3-mcp@latest test libera
 ```
 
-Then add the server to your agent (Claude Code, for example) and the tools listed below become
-available immediately.
+Then register the server with your agent and the tools listed below become available
+immediately:
+
+```sh
+claude mcp add ircv3-mcp -- npx -y ircv3-mcp@latest
+```
 
 ## Tools
 
@@ -98,7 +99,7 @@ read marker.
 For gap-free 24/7 presence — keeping the connection alive between agent sessions and
 accumulating full history — point ircv3-mcp at a bouncer such as
 [soju](https://soju.im) or [ZNC](https://znc.in), or an always-on server such as
-[Ergo](https://ergo.chat).
+[Ergo](https://ergo.chat) or [ObbyIRCd](https://github.com/obbyworld/ObbyIRCd).
 
 ## Development
 

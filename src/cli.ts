@@ -243,19 +243,31 @@ async function cmdConfigure(deps: CmdDeps = {}): Promise<number> {
     const nick = await ask('Nick: ');
     const username = await ask('Username (ident) []: ');
     const realname = await ask('Realname []: ');
-    const saslStr = await ask('SASL mech (PLAIN/EXTERNAL/SCRAM-SHA-256, or none) [none]: ');
+    if (!name || !host || !nick) {
+      err('configure: name, host, and nick are required\n');
+      return 1;
+    }
+    const validMechs = ['PLAIN', 'EXTERNAL', 'SCRAM-SHA-256'] as const;
     let saslConfig: AccountConfig['sasl'] = null;
     let password: string | undefined;
-    if (saslStr && saslStr.toLowerCase() !== 'none') {
-      const mechUpper = saslStr.toUpperCase() as AccountConfig['sasl'] extends null
-        ? never
-        : NonNullable<AccountConfig['sasl']>['mech'];
-      const saslAccount = await ask(`SASL account [${nick}]: `);
-      saslConfig = {
-        mech: mechUpper as 'PLAIN' | 'EXTERNAL' | 'SCRAM-SHA-256',
-        account: saslAccount || nick,
-      };
-      password = await askMasked('Password (hidden): ');
+    let saslStr = (
+      await ask('SASL mechanism — PLAIN, EXTERNAL, SCRAM-SHA-256, or none [none]: ')
+    ).trim();
+    while (saslStr && saslStr.toLowerCase() !== 'none') {
+      const mech = saslStr.toUpperCase();
+      if (!validMechs.includes(mech as (typeof validMechs)[number])) {
+        process.stdout.write(
+          `Unknown mechanism '${saslStr}'. Enter one of PLAIN, EXTERNAL, SCRAM-SHA-256, or none.\n`,
+        );
+        saslStr = (await ask('SASL mechanism [none]: ')).trim();
+        continue;
+      }
+      const saslAccount = (await ask(`SASL account [${nick}]: `)).trim();
+      saslConfig = { mech: mech as (typeof validMechs)[number], account: saslAccount || nick };
+      if (mech !== 'EXTERNAL') {
+        password = await askMasked('Password (hidden): ');
+      }
+      break;
     }
     const channelsStr = await ask('Channels (comma-separated, or blank) []: ');
     const channels = channelsStr
@@ -281,7 +293,12 @@ async function cmdConfigure(deps: CmdDeps = {}): Promise<number> {
       allowRaw: true,
     };
 
-    saveAccount(acc);
+    try {
+      saveAccount(acc);
+    } catch (e) {
+      err(`configure: ${e instanceof Error ? e.message : String(e)}\n`);
+      return 1;
+    }
     if (password && saslConfig) {
       setSecret(name, password);
     }

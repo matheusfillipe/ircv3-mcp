@@ -81,12 +81,15 @@ describe('file backend with generated key file', () => {
     delete process.env.IRCV3_MCP_SECRET_KEY;
   });
 
-  it('creates the key file with mode 0600 on first write', () => {
-    setSecret('acc', 'pw');
-    const kf = keyFile();
-    const mode = statSync(kf).mode & 0o777;
-    expect(mode).toBe(0o600);
-  });
+  it.skipIf(process.platform === 'win32')(
+    'creates the key file with mode 0600 on first write',
+    () => {
+      setSecret('acc', 'pw');
+      const kf = keyFile();
+      const mode = statSync(kf).mode & 0o777;
+      expect(mode).toBe(0o600);
+    },
+  );
 
   it('round-trips a secret using the generated key', () => {
     setSecret('acc', 'mypassword');
