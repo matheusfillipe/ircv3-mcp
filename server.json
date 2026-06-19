@@ -1,0 +1,20 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-09-29/server.json",
+  "name": "io.github.matheusfillipe/ircv3-mcp",
+  "description": "An IRCv3 MCP server: a mini IRC client for agents (send, reply, react, read chathistory, SASL).",
+  "version": "0.1.0",
+  "repository": {
+    "url": "https://github.com/matheusfillipe/ircv3-mcp",
+    "source": "github"
+  },
+  "packages": [
+    {
+      "registryType": "npm",
+      "identifier": "ircv3-mcp",
+      "version": "0.1.0",
+      "transport": {
+        "type": "stdio"
+      }
+    }
+  ]
+}
