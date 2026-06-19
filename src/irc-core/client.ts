@@ -681,6 +681,118 @@ export class IrcClient extends EventEmitter {
     });
   }
 
+  join(channel: string, key?: string): void {
+    const line = key ? `JOIN ${channel} ${key}` : `JOIN ${channel}`;
+    this.write(line);
+  }
+
+  part(channel: string, reason?: string): void {
+    const line = reason ? `PART ${channel} :${reason}` : `PART ${channel}`;
+    this.write(line);
+  }
+
+  redact(target: string, msgid: string, reason?: string): void {
+    const line = reason ? `REDACT ${target} ${msgid} :${reason}` : `REDACT ${target} ${msgid}`;
+    this.write(line);
+  }
+
+  listMembers(
+    channel: string,
+    timeoutMs = 8000,
+  ): Promise<Array<{ nick: string; prefixes: string }>> {
+    return new Promise((resolve, reject) => {
+      const members: Array<{ nick: string; prefixes: string }> = [];
+      // Fall back to the RFC standard symbols when the server hasn't sent ISUPPORT yet.
+      const configuredSymbols = this.isupport.prefix.map((p) => p.symbol);
+      const prefixSymbols = new Set(configuredSymbols.length > 0 ? configuredSymbols : ['@', '+']);
+
+      const timer = setTimeout(() => {
+        this.off('message', onMessage);
+        reject(new Error(`NAMES timed out after ${timeoutMs}ms`));
+      }, timeoutMs);
+
+      const onMessage = (msg: IrcMessage) => {
+        if (msg.command === '353') {
+          // params: [me, chanType, channel, :member list]
+          const chanParam = msg.params[2];
+          if (chanParam?.toLowerCase() !== channel.toLowerCase()) return;
+          const trailing = msg.params[msg.params.length - 1] ?? '';
+          for (const entry of trailing.split(' ')) {
+            if (!entry) continue;
+            // Strip userhost-in-names suffix (nick!user@host) — keep only nick portion
+            const nickPart = entry.split('!')[0]!;
+            let i = 0;
+            while (i < nickPart.length && prefixSymbols.has(nickPart[i]!)) i++;
+            members.push({ nick: nickPart.slice(i), prefixes: nickPart.slice(0, i) });
+          }
+        } else if (msg.command === '366') {
+          const chanParam = msg.params[1];
+          if (chanParam?.toLowerCase() !== channel.toLowerCase()) return;
+          clearTimeout(timer);
+          this.off('message', onMessage);
+          resolve(members);
+        }
+      };
+
+      this.on('message', onMessage);
+      this.write(`NAMES ${channel}`);
+    });
+  }
+
+  whois(
+    nick: string,
+    timeoutMs = 8000,
+  ): Promise<{
+    nick: string;
+    account?: string;
+    realname?: string;
+    channels?: string;
+    lines: string[];
+  }> {
+    return new Promise((resolve, reject) => {
+      const lines: string[] = [];
+      let account: string | undefined;
+      let realname: string | undefined;
+      let channels: string | undefined;
+
+      const timer = setTimeout(() => {
+        this.off('message', onMessage);
+        reject(new Error(`WHOIS timed out after ${timeoutMs}ms`));
+      }, timeoutMs);
+
+      const onMessage = (msg: IrcMessage) => {
+        const whoisNumerics = new Set(['311', '318', '319', '330', '312', '313', '317', '338']);
+        if (!whoisNumerics.has(msg.command)) return;
+
+        const trailing = msg.params[msg.params.length - 1] ?? '';
+
+        if (msg.command === '311') {
+          // RPL_WHOISUSER: params = [me, nick, user, host, *, :realname]
+          realname = trailing;
+          lines.push(trailing);
+        } else if (msg.command === '330') {
+          // RPL_WHOISACCOUNT: params = [me, nick, account, :is logged in as]
+          account = msg.params[2];
+          lines.push(trailing);
+        } else if (msg.command === '319') {
+          // RPL_WHOISCHANNELS: params = [me, nick, :channels]
+          channels = trailing;
+          lines.push(trailing);
+        } else if (msg.command === '318') {
+          // RPL_ENDOFWHOIS
+          clearTimeout(timer);
+          this.off('message', onMessage);
+          resolve({ nick, account, realname, channels, lines });
+        } else {
+          lines.push(trailing);
+        }
+      };
+
+      this.on('message', onMessage);
+      this.write(`WHOIS ${nick}`);
+    });
+  }
+
   quit(reason = 'bye'): void {
     this.transport.write(`QUIT :${reason}`);
     this.transport.close();
