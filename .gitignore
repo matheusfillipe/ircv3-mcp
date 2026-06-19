@@ -1,0 +1,13 @@
+node_modules/
+dist/
+*.tsbuildinfo
+coverage/
+.DS_Store
+*.log
+
+# local runtime state / secrets (never commit)
+.env
+.env.*
+secrets.enc
+secrets.key
+config.local.toml
