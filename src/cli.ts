@@ -1,5 +1,7 @@
 import { parseArgs } from 'node:util';
 import { createInterface } from 'node:readline';
+import { fileURLToPath } from 'node:url';
+import { existsSync, realpathSync } from 'node:fs';
 import { VERSION } from './version';
 import { runStdio } from './mcp/server';
 import { saveAccount, listAccounts, removeAccount, getAccount } from './config/store';
@@ -344,19 +346,23 @@ async function cmdTest(name: string | undefined, deps: CmdDeps = {}): Promise<nu
     channels: acc.channels,
   });
 
-  const timeout = new Promise<never>((_, reject) =>
-    setTimeout(() => reject(new Error('Connection timed out after 20s')), 20_000),
-  );
+  out(`Connecting to ${acc.host}:${acc.port}...\n`);
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error('Connection timed out after 20s')), 20_000);
+  });
 
   try {
     await Promise.race([client.connect(), timeout]);
     out(`Connected as ${client.nick}\n`);
     out(`Enabled caps: ${Array.from(client.enabledCaps).join(', ')}\n`);
-    client.quit();
+    await client.quit();
     return 0;
   } catch (e) {
     err(`test: ${String(e)}\n`);
     return 1;
+  } finally {
+    if (timer) clearTimeout(timer);
   }
 }
 
@@ -408,6 +414,17 @@ export async function run(argv: string[]): Promise<number> {
   return 1;
 }
 
-run(process.argv.slice(2)).then((code) => {
-  if (code) process.exitCode = code;
-});
+const entryArg = process.argv[1];
+const invokedDirectly =
+  !!entryArg && existsSync(entryArg) && realpathSync(entryArg) === fileURLToPath(import.meta.url);
+
+if (invokedDirectly) {
+  const argv = process.argv.slice(2);
+  const isServe = argv[0] === undefined || (argv[0] === 'serve' && !argv.includes('--http'));
+  run(argv).then((code) => {
+    process.exitCode = code;
+    if (!isServe) {
+      process.exit(code);
+    }
+  });
+}

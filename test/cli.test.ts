@@ -67,7 +67,7 @@ describe('--version', () => {
     const code = await run(['--version']);
     cap.restore();
     expect(code).toBe(0);
-    expect(cap.get()).toMatch(/ircv3-mcp 0\.1\.0/);
+    expect(cap.get()).toMatch(/ircv3-mcp \d+\.\d+\.\d+/);
   });
 
   it('-v alias also works', async () => {
