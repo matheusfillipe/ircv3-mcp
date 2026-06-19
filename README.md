@@ -7,14 +7,12 @@ tools backed by a full IRCv3 connection with SASL authentication.
 
 ## Install
 
-Requires Node >= 20. Nothing to install — everything runs through `npx` and always pulls the
-latest published version.
+Requires Node >= 20. Nothing to install — it runs through `npx` and always pulls the latest
+published version.
 
-Register with Claude Code (this is all most users need):
-
-```sh
-claude mcp add ircv3-mcp -- npx -y ircv3-mcp@latest
-```
+Setup is two steps, both in the Quickstart below: first configure an IRC account (host, nick,
+SASL), then register the server with your agent. The agent has nothing to talk to until at
+least one account is configured.
 
 ## Quickstart
 
