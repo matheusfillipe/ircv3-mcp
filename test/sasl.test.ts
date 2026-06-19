@@ -20,6 +20,12 @@ describe('SASL PLAIN', () => {
     const parts = decoded.split('\0');
     expect(parts).toEqual(['', 'jilles', 'sesame']);
   });
+
+  it('non-ASCII password round-trips correctly as UTF-8 base64', () => {
+    const result = plainResponse('user', 'pä§w😀rd');
+    const expected = Buffer.from('\0user\0pä§w😀rd', 'utf8').toString('base64');
+    expect(result).toBe(expected);
+  });
 });
 
 describe('SASL EXTERNAL', () => {

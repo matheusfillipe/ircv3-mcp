@@ -1,8 +1,49 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { join } from 'node:path';
+import os from 'node:os';
 import { makeTools } from '../src/mcp/tools';
+import { saveAccount } from '../src/config/store';
+import { AccountConfigSchema } from '../src/config/schema';
 import type { SessionPool } from '../src/mcp/session';
 import type { IrcClient } from '../src/irc-core/client';
 import type { HistoryMessage, ReactionIndex } from '../src/irc-core/types';
+
+let tmpDir: string;
+let origConfigDir: string | undefined;
+let origSecretBackend: string | undefined;
+
+beforeEach(() => {
+  tmpDir = mkdtempSync(join(os.tmpdir(), 'ircv3-tools-'));
+  origConfigDir = process.env.IRCV3_MCP_CONFIG_DIR;
+  origSecretBackend = process.env.IRCV3_MCP_SECRET_BACKEND;
+  process.env.IRCV3_MCP_CONFIG_DIR = tmpDir;
+  process.env.IRCV3_MCP_SECRET_BACKEND = 'file';
+  // Save a default account (allowRaw: true) so irc_send_raw lookup succeeds in all tests
+  saveAccount(
+    AccountConfigSchema.parse({
+      name: 'default',
+      host: 'irc.test.com',
+      nick: 'testnick',
+      default: true,
+      allowRaw: true,
+    }),
+  );
+});
+
+afterEach(() => {
+  if (origConfigDir === undefined) {
+    delete process.env.IRCV3_MCP_CONFIG_DIR;
+  } else {
+    process.env.IRCV3_MCP_CONFIG_DIR = origConfigDir;
+  }
+  if (origSecretBackend === undefined) {
+    delete process.env.IRCV3_MCP_SECRET_BACKEND;
+  } else {
+    process.env.IRCV3_MCP_SECRET_BACKEND = origSecretBackend;
+  }
+  rmSync(tmpDir, { recursive: true, force: true });
+});
 
 const sampleMessages: HistoryMessage[] = [
   {
@@ -253,9 +294,27 @@ describe('makeTools', () => {
       const { pool, client } = makePool();
       const tools = makeTools({ pool });
       const t = tools.find((x) => x.name === 'irc_send_raw')!;
-      const result = await t.handler({ line: 'PING :server' });
+      const result = await t.handler({ account: 'default', line: 'PING :server' });
       expect(result.structuredContent).toEqual({ sent: true });
       expect(client.send).toHaveBeenCalledWith('PING :server');
+    });
+
+    it('returns isError when account.allowRaw is false', async () => {
+      saveAccount(
+        AccountConfigSchema.parse({
+          name: 'noraw',
+          host: 'irc.noraw.com',
+          nick: 'nr',
+          allowRaw: false,
+        }),
+      );
+      const { pool, client } = makePool();
+      const tools = makeTools({ pool });
+      const t = tools.find((x) => x.name === 'irc_send_raw')!;
+      const result = await t.handler({ account: 'noraw', line: 'PING :server' });
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain("raw IRC is disabled for account 'noraw'");
+      expect(client.send).not.toHaveBeenCalled();
     });
   });
 

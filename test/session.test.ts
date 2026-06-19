@@ -109,6 +109,25 @@ describe('SessionPool', () => {
     expect(yStatus.connected).toBe(false);
   });
 
+  it('two concurrent get() calls resolve to the same client and connect is called once', async () => {
+    saveAccount(AccountConfigSchema.parse({ name: 'c', host: 'irc.c.com', nick: 'cn' }));
+
+    const client = fakeClient('cn');
+    const spy = vi.fn().mockResolvedValue(client);
+    const pool = new SessionPool({ connect: spy });
+
+    // Start both calls without awaiting the first
+    const p1 = pool.get('c');
+    const p2 = pool.get('c');
+
+    const [c1, c2] = await Promise.all([p1, p2]);
+
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect(c1).toBe(client);
+    expect(c2).toBe(client);
+    expect(c1).toBe(c2);
+  });
+
   it('closeAll() calls quit() on all cached clients and clears cache', async () => {
     saveAccount(AccountConfigSchema.parse({ name: 'p', host: 'irc.p.com', nick: 'pn' }));
     saveAccount(AccountConfigSchema.parse({ name: 'q', host: 'irc.q.com', nick: 'qn' }));

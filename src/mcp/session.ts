@@ -26,21 +26,35 @@ const defaultConnect: ConnectFn = async (acc, password) => {
 
 export class SessionPool {
   private cache = new Map<string, IrcClient>();
+  private pending = new Map<string, Promise<IrcClient>>();
   private connectFn: ConnectFn;
 
   constructor(opts?: { connect?: ConnectFn }) {
     this.connectFn = opts?.connect ?? defaultConnect;
   }
 
-  async get(name?: string): Promise<IrcClient> {
+  get(name?: string): Promise<IrcClient> {
     const acc = getAccount(name);
     const cached = this.cache.get(acc.name);
-    if (cached && cached.connected) return cached;
+    if (cached && cached.connected) return Promise.resolve(cached);
+
+    const inflight = this.pending.get(acc.name);
+    if (inflight) return inflight;
 
     const password = acc.sasl ? getSecret(acc.name) : null;
-    const client = await this.connectFn(acc, password);
-    this.cache.set(acc.name, client);
-    return client;
+    const promise = this.connectFn(acc, password).then(
+      (client) => {
+        this.cache.set(acc.name, client);
+        this.pending.delete(acc.name);
+        return client;
+      },
+      (err: unknown) => {
+        this.pending.delete(acc.name);
+        throw err;
+      },
+    );
+    this.pending.set(acc.name, promise);
+    return promise;
   }
 
   status(): Array<{

@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { renderTranscript } from './render';
+import { getAccount } from '../config/store';
 import type { SessionPool } from './session';
 import type { Selector } from '../irc-core/chathistory';
 
@@ -464,6 +465,10 @@ export function makeTools(ctx: { pool: SessionPool }): ToolDef[] {
       },
       handler: async (args: { account?: string; line: string }) => {
         try {
+          const acc = getAccount(args.account);
+          if (acc.allowRaw === false) {
+            return errResult(`Error: raw IRC is disabled for account '${acc.name}'`);
+          }
           const client = await pool.get(args.account);
           client.send(args.line);
           return {

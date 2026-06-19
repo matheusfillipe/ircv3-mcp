@@ -12,6 +12,7 @@ import { externalResponse } from './sasl/external';
 import { chunkAuthenticate } from './sasl/chunk';
 import { ScramSha256 } from './sasl/scram';
 import { buildChathistory, buildTargets, clampLimit } from './chathistory';
+import { nameEquals } from './casemap';
 import type { IrcMessage, Isupport, SaslMech, Tags, HistoryMessage, ReactionIndex } from './types';
 import type { HistoryMode, Selector } from './chathistory';
 
@@ -173,7 +174,7 @@ export class IrcClient extends EventEmitter {
     let response: string;
 
     if (mech === 'PLAIN') {
-      response = plainResponse(sasl.account, sasl.password, sasl.account);
+      response = plainResponse(sasl.account, sasl.password);
     } else if (mech === 'EXTERNAL') {
       response = externalResponse();
     } else if (mech === 'SCRAM-SHA-256') {
@@ -185,10 +186,19 @@ export class IrcClient extends EventEmitter {
         const plaintext = this.scram.clientFirst();
         response = Buffer.from(plaintext, 'utf8').toString('base64');
       } else {
-        // challenge is base64-encoded serverFirst — decode to plaintext for clientFinal
-        const serverFirst = Buffer.from(challenge, 'base64').toString('utf8');
-        const plaintext = this.scram.clientFinal(serverFirst);
-        response = Buffer.from(plaintext, 'utf8').toString('base64');
+        const decoded = Buffer.from(challenge, 'base64').toString('utf8');
+        if (decoded.includes('v=')) {
+          // Server-final: verify server signature before completing auth
+          if (!this.scram.serverSignatureValid(decoded)) {
+            finish(new Error('SCRAM: server signature verification failed'));
+            return;
+          }
+          response = '+';
+        } else {
+          // Server-first: compute and send client-final
+          const plaintext = this.scram.clientFinal(decoded);
+          response = Buffer.from(plaintext, 'utf8').toString('base64');
+        }
       }
     } else {
       finish(new Error(`Unsupported SASL mechanism: ${mech}`));
@@ -521,25 +531,30 @@ export class IrcClient extends EventEmitter {
     } = opts;
     if (!selector) return [];
 
-    const limit = clampLimit(opts.limit ?? 50, this.isupport);
+    const totalLimit = opts.limit ?? 50;
     const collected: HistoryMessage[] = [];
     const MAX_PAGES = 20;
 
-    let remaining = limit;
+    let remaining = totalLimit;
     let currentSelector = selector;
+    let currentMode: HistoryMode = mode;
     let page = 0;
 
     while (remaining > 0 && page < MAX_PAGES) {
-      const pageLimit = remaining;
+      // Clamp the per-page request to the server-advertised per-request maximum
+      const pageLimit = clampLimit(remaining, this.isupport);
       let cmdLine: string;
-      if (mode === 'between') {
+      if (currentMode === 'between') {
         cmdLine = buildChathistory('between', target, {
           selector1: currentSelector,
           selector2: selector,
           limit: pageLimit,
         });
       } else {
-        cmdLine = buildChathistory(mode, target, { selector: currentSelector, limit: pageLimit });
+        cmdLine = buildChathistory(currentMode, target, {
+          selector: currentSelector,
+          limit: pageLimit,
+        });
       }
 
       const [cmd, ...rest] = cmdLine.split(' ');
@@ -555,10 +570,16 @@ export class IrcClient extends EventEmitter {
       if (mode !== 'latest' && mode !== 'before') break;
       if (pageMsgs.length < pageLimit) break;
 
-      // Next page: BEFORE the oldest received message
-      const oldestMsgid = pageMsgs[0]?.msgid;
+      // Sort the page ascending to find the oldest message, then fetch BEFORE it
+      const sorted = [...pageMsgs].sort((a, b) => {
+        if (a.time && b.time && a.time !== b.time) return a.time < b.time ? -1 : 1;
+        if (a.msgid && b.msgid && a.msgid !== b.msgid) return a.msgid < b.msgid ? -1 : 1;
+        return 0;
+      });
+      const oldestMsgid = sorted[0]?.msgid;
       if (!oldestMsgid) break;
       currentSelector = { type: 'msgid', value: oldestMsgid };
+      currentMode = 'before';
     }
 
     // Sort ascending by time, then msgid
@@ -636,8 +657,12 @@ export class IrcClient extends EventEmitter {
         batchData: { type: string; params: string[]; messages: IrcMessage[] },
       ) => {
         if (!types.includes(batchData.type)) return;
-        // Match target when specified
-        if (target !== undefined && batchData.params[0] !== target) return;
+        // Match target when specified (case-insensitive per server casemapping)
+        if (
+          target !== undefined &&
+          !nameEquals(batchData.params[0] ?? '', target, this.isupport.casemapping)
+        )
+          return;
 
         clearTimeout(timer);
         this.off('batch', onBatch);
@@ -793,9 +818,18 @@ export class IrcClient extends EventEmitter {
     });
   }
 
-  quit(reason = 'bye'): void {
-    this.transport.write(`QUIT :${reason}`);
+  quit(reason = 'bye'): Promise<void> {
+    this.write(`QUIT :${reason}`);
     this.transport.close();
+    return new Promise<void>((resolve) => {
+      const done = () => resolve();
+      this.transport.once('close', done);
+      // Resolve after a short timeout to avoid hanging if close never fires
+      setTimeout(() => {
+        this.transport.off('close', done);
+        resolve();
+      }, 1000);
+    });
   }
 
   private write(line: string): void {

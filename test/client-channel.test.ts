@@ -163,4 +163,18 @@ describe('IrcClient channel/user methods', () => {
       await expect(client.whois('alice', 50)).rejects.toThrow('WHOIS timed out');
     });
   });
+
+  describe('quit', () => {
+    it('quit() sends QUIT line and resolves', async () => {
+      const { client, clientWrites, socket } = await makeConnectedClient({ caps: [] });
+
+      // Emit close from the socket so quit() resolves quickly (not after the 1000ms fallback)
+      const quitPromise = client.quit('bye');
+      expect(clientWrites().some((l) => l === 'QUIT :bye')).toBe(true);
+      socket.emit('close');
+
+      // Should resolve after close event is emitted
+      await expect(quitPromise).resolves.toBeUndefined();
+    });
+  });
 });
