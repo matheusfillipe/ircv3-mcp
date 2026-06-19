@@ -1,0 +1,70 @@
+# ircv3-mcp example configuration
+#
+# Location: ~/.config/ircv3-mcp/config.toml
+# Override with: IRCV3_MCP_CONFIG_DIR=/path/to/dir
+#
+# Accounts are stored as an array of tables.
+# Passwords are NOT stored here; use the CLI to store them securely:
+#   ircv3-mcp add-account <name> ... --password-stdin
+# or
+#   ircv3-mcp configure
+
+[[accounts]]
+# Unique name used to identify this account in CLI commands and MCP tool calls.
+name = "libera"
+
+# IRC server hostname.
+host = "irc.libera.chat"
+
+# Port number. Default: 6697.
+port = 6697
+
+# Enable TLS. Default: true.
+tls = true
+
+# Nickname the client will use on IRC.
+nick = "mybot"
+
+# IRC username (ident). Defaults to nick if omitted.
+username = "mybot"
+
+# Real name shown in WHOIS. Defaults to nick if omitted.
+realname = "My Bot"
+
+# Channels to join automatically on connect.
+channels = ["#test"]
+
+# Mark this account as the default. When only one account is configured
+# the default flag has no effect; it matters when multiple accounts exist.
+default = true
+
+# Allow the irc_send_raw tool for this account.
+# Set to false to block raw line access for safety.
+allowRaw = true
+
+# SASL authentication block. Remove or omit entirely to connect without SASL.
+[accounts.sasl]
+# Mechanism: PLAIN, EXTERNAL, or SCRAM-SHA-256.
+mech = "PLAIN"
+
+# The account name to authenticate as (often the same as nick).
+account = "mybot"
+
+# Password is NOT stored here. Store it with:
+#   echo 'yourpassword' | ircv3-mcp add-account libera --host irc.libera.chat \
+#     --nick mybot --sasl PLAIN --account mybot --password-stdin
+
+
+# Second account example (bouncer connection for 24/7 presence).
+#
+# [[accounts]]
+# name = "soju"
+# host = "localhost"
+# port = 6697
+# tls = true
+# nick = "mybot"
+# channels = ["#general", "#dev"]
+#
+# [accounts.sasl]
+# mech = "PLAIN"
+# account = "mybot/libera"
