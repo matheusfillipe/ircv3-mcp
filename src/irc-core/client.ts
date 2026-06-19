@@ -449,19 +449,21 @@ export class IrcClient extends EventEmitter {
 
   /**
    * Send a message (PRIVMSG/NOTICE), with optional multiline batch support.
-   * Returns the msgid of the echo'd message when labeled-response + echo-message are both active.
+   * Resolves with `{ ok: true }` once the send is confirmed, including the server-assigned
+   * msgid when it can be captured (labeled-response/echo-message). Rejects when a send that
+   * should be confirmable is not echoed back, so callers never see ambiguous success.
    */
   async sendMessage(opts: {
     target: string;
     lines: string[];
     notice?: boolean;
     inReplyTo?: string;
-  }): Promise<{ msgid?: string }> {
+  }): Promise<{ ok: true; msgid?: string }> {
     const { target, lines, notice = false, inReplyTo } = opts;
     const command = notice ? 'NOTICE' : 'PRIVMSG';
     const replyTags: Tags = inReplyTo ? { '+reply': inReplyTo, '+draft/reply': inReplyTo } : {};
 
-    if (lines.length === 0) return {};
+    if (lines.length === 0) throw new Error('sendMessage: no lines provided');
 
     const hasLabeled = this.enabledCaps.has('labeled-response');
     const hasEcho = this.enabledCaps.has('echo-message');
@@ -472,14 +474,14 @@ export class IrcClient extends EventEmitter {
       if (hasLabeled && hasEcho) {
         const msgs = await this.request(command, [target, lines[0]!], { tags });
         const echo = msgs.find((m) => m.command === command);
-        return { msgid: echo?.tags['msgid'] };
+        return { ok: true, msgid: echo?.tags['msgid'] };
       }
       this.sendCommand(
         command,
         [target, lines[0]!],
         Object.keys(tags).length > 0 ? tags : undefined,
       );
-      return {};
+      return { ok: true };
     }
 
     if (hasMultiline) {
@@ -487,24 +489,69 @@ export class IrcClient extends EventEmitter {
         .toString('base64url')
         .replace(/[^A-Za-z0-9]/g, '')
         .slice(0, 12);
-      const openTags: Tags = { ...replyTags };
-      this.sendCommand('BATCH', [`+${ref}`, 'draft/multiline', target], openTags);
+      const echoPromise = hasEcho ? this.captureMultilineEcho(target, 10_000) : null;
+      this.sendCommand('BATCH', [`+${ref}`, 'draft/multiline', target], { ...replyTags });
       for (const line of lines) {
         this.sendCommand(command, [target, line], { batch: ref });
       }
       this.sendCommand('BATCH', [`-${ref}`]);
-      return {};
+      if (echoPromise) {
+        const echo = await echoPromise;
+        if (!echo.received) {
+          throw new Error('multiline message was not confirmed by the server (no echo received)');
+        }
+        return { ok: true, msgid: echo.msgid };
+      }
+      return { ok: true };
     }
 
+    let firstMsgid: string | undefined;
     for (let i = 0; i < lines.length; i++) {
       const tags: Tags = i === 0 ? { ...replyTags } : {};
-      this.sendCommand(
-        command,
-        [target, lines[i]!],
-        Object.keys(tags).length > 0 ? tags : undefined,
-      );
+      if (hasLabeled && hasEcho) {
+        const msgs = await this.request(command, [target, lines[i]!], { tags });
+        if (i === 0) firstMsgid = msgs.find((m) => m.command === command)?.tags['msgid'];
+      } else {
+        this.sendCommand(
+          command,
+          [target, lines[i]!],
+          Object.keys(tags).length > 0 ? tags : undefined,
+        );
+      }
     }
-    return {};
+    return { ok: true, msgid: firstMsgid };
+  }
+
+  /**
+   * Wait for the server to echo back a multiline message we just sent to `target`.
+   * Resolves `{ received: false }` on timeout so the caller can surface a real error.
+   */
+  private captureMultilineEcho(
+    target: string,
+    timeoutMs: number,
+  ): Promise<{ received: boolean; msgid?: string }> {
+    return new Promise((resolve) => {
+      const cleanup = () => {
+        clearTimeout(timer);
+        this.off('batch', onBatch);
+      };
+      const onBatch = (
+        _ref: string,
+        data: { type: string; params: string[]; tags: Tags; messages: IrcMessage[] },
+      ) => {
+        if (data.type !== 'draft/multiline' || data.params[0] !== target) return;
+        if (!data.messages.some((m) => m.source?.nick === this.nick)) return;
+        const msgid =
+          data.tags['msgid'] ?? data.messages.find((m) => m.tags['msgid'])?.tags['msgid'];
+        cleanup();
+        resolve({ received: true, msgid });
+      };
+      const timer = setTimeout(() => {
+        cleanup();
+        resolve({ received: false });
+      }, timeoutMs);
+      this.on('batch', onBatch);
+    });
   }
 
   /**

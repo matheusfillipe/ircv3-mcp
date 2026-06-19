@@ -283,7 +283,7 @@ export function makeTools(ctx: { pool: SessionPool }): ToolDef[] {
       config: {
         title: 'Send IRC message',
         description:
-          'Send a message to a channel or user. Provide text (single line) or lines (multiline array). Use in_reply_to with a msgid to thread replies.',
+          'Send a message to a channel or user. Provide text (single line) or lines (multiline array). Use in_reply_to with a msgid to thread replies. On success returns { ok: true } and, when available, the server-assigned msgid (use it for follow-up reply/react/redact). ok: true means the server confirmed the send — trust it; do not re-read history to verify. A failed or unconfirmed send returns an error, never an empty result.',
         inputSchema: {
           account: z.string().optional(),
           target: z.string(),
@@ -292,7 +292,7 @@ export function makeTools(ctx: { pool: SessionPool }): ToolDef[] {
           notice: z.boolean().optional(),
           in_reply_to: z.string().optional(),
         },
-        outputSchema: { msgid: z.string().optional() },
+        outputSchema: { ok: z.boolean(), msgid: z.string().optional() },
         annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: true },
       },
       handler: async (args: Record<string, unknown>) => {
