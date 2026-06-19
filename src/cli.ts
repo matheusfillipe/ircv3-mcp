@@ -247,27 +247,33 @@ async function cmdConfigure(deps: CmdDeps = {}): Promise<number> {
       err('configure: name, host, and nick are required\n');
       return 1;
     }
-    const validMechs = ['PLAIN', 'EXTERNAL', 'SCRAM-SHA-256'] as const;
-    let saslConfig: AccountConfig['sasl'] = null;
-    let password: string | undefined;
-    let saslStr = (
-      await ask('SASL mechanism — PLAIN, EXTERNAL, SCRAM-SHA-256, or none [none]: ')
-    ).trim();
-    while (saslStr && saslStr.toLowerCase() !== 'none') {
-      const mech = saslStr.toUpperCase();
-      if (!validMechs.includes(mech as (typeof validMechs)[number])) {
-        process.stdout.write(
-          `Unknown mechanism '${saslStr}'. Enter one of PLAIN, EXTERNAL, SCRAM-SHA-256, or none.\n`,
-        );
-        saslStr = (await ask('SASL mechanism [none]: ')).trim();
+    const mechMenu = ['none', 'PLAIN', 'EXTERNAL', 'SCRAM-SHA-256'] as const;
+    process.stdout.write('SASL mechanism:\n');
+    mechMenu.forEach((m, i) => process.stdout.write(`  ${i + 1}) ${m}\n`));
+    let chosen: string | undefined;
+    while (!chosen) {
+      const ans = (await ask('Choose [1]: ')).trim();
+      if (ans === '') {
+        chosen = 'none';
+        break;
+      }
+      const pick: string | undefined =
+        mechMenu[Number(ans) - 1] ?? mechMenu.find((m) => m.toLowerCase() === ans.toLowerCase());
+      if (!pick) {
+        process.stdout.write('Enter a number 1-4 or a mechanism name.\n');
         continue;
       }
+      chosen = pick;
+    }
+    let saslConfig: AccountConfig['sasl'] = null;
+    let password: string | undefined;
+    if (chosen !== 'none') {
+      const mech = chosen as 'PLAIN' | 'EXTERNAL' | 'SCRAM-SHA-256';
       const saslAccount = (await ask(`SASL account [${nick}]: `)).trim();
-      saslConfig = { mech: mech as (typeof validMechs)[number], account: saslAccount || nick };
+      saslConfig = { mech, account: saslAccount || nick };
       if (mech !== 'EXTERNAL') {
         password = await askMasked('Password (hidden): ');
       }
-      break;
     }
     const channelsStr = await ask('Channels (comma-separated, or blank) []: ');
     const channels = channelsStr
