@@ -417,6 +417,118 @@ export function makeTools(ctx: { pool: SessionPool }): ToolDef[] {
     },
 
     {
+      name: 'irc_send_with_typing',
+      config: {
+        title: 'Send IRC message with typing notification',
+        description:
+          'Send a message the way a person would: emit a typing notification, hold it for a short time proportional to the message length (about 90 words per minute by default, tunable with wpm), then send the message. Use this for direct conversation where a natural typing indicator is desirable; use irc_send_message when you just want to deliver text immediately. Returns { ok: true } and the msgid when available, same as irc_send_message.',
+        inputSchema: {
+          account: z.string().optional(),
+          target: z.string(),
+          text: z.string().optional(),
+          lines: z.array(z.string()).optional(),
+          notice: z.boolean().optional(),
+          in_reply_to: z.string().optional(),
+          wpm: z.number().positive().optional(),
+        },
+        outputSchema: { ok: z.boolean(), msgid: z.string().optional() },
+        annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: true },
+      },
+      handler: async (args: Record<string, unknown>) => {
+        try {
+          const {
+            account,
+            target,
+            text,
+            lines: linesArg,
+            notice,
+            in_reply_to,
+            wpm,
+          } = args as {
+            account?: string;
+            target: string;
+            text?: string;
+            lines?: string[];
+            notice?: boolean;
+            in_reply_to?: string;
+            wpm?: number;
+          };
+          const lines = linesArg ?? (text !== undefined ? [text] : undefined);
+          if (!lines) {
+            return errResult('Error: provide either text or lines to send a message.');
+          }
+          const client = await pool.get(account);
+          const result = await client.sendWithTyping({
+            target,
+            lines,
+            notice,
+            inReplyTo: in_reply_to,
+            wpm,
+          });
+          return {
+            content: [{ type: 'text' as const, text: JSON.stringify(result) }],
+            structuredContent: result,
+          };
+        } catch (e) {
+          if (e instanceof Error) return errResult('Error: ' + e.message);
+          throw e;
+        }
+      },
+    },
+
+    {
+      name: 'irc_start_typing',
+      config: {
+        title: 'Start IRC typing notification',
+        description:
+          'Send a typing notification (+typing=active) to a channel or user, signalling that a message is being composed. Clients show this for about 6 seconds, so call again to keep it alive while you work, then send the message or call irc_stop_typing. For one-shot human-like sends, prefer irc_send_with_typing.',
+        inputSchema: { account: z.string().optional(), target: z.string() },
+        outputSchema: { ok: z.literal(true) },
+        annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: true },
+      },
+      handler: async (args: Record<string, unknown>) => {
+        try {
+          const { account, target } = args as { account?: string; target: string };
+          const client = await pool.get(account);
+          client.sendTyping(target, 'active');
+          return {
+            content: [{ type: 'text' as const, text: '{"ok":true}' }],
+            structuredContent: { ok: true as const },
+          };
+        } catch (e) {
+          if (e instanceof Error) return errResult('Error: ' + e.message);
+          throw e;
+        }
+      },
+    },
+
+    {
+      name: 'irc_stop_typing',
+      config: {
+        title: 'Stop IRC typing notification',
+        description:
+          'Clear an active typing notification (+typing=done) for a channel or user without sending a message. Use this if you started typing with irc_start_typing but decided not to send.',
+        inputSchema: { account: z.string().optional(), target: z.string() },
+        outputSchema: { ok: z.literal(true) },
+        annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: true },
+      },
+      handler: async (args: Record<string, unknown>) => {
+        try {
+          const { account, target } = args as { account?: string; target: string };
+          const client = await pool.get(account);
+          client.sendTyping(target, 'done');
+          return {
+            content: [{ type: 'text' as const, text: '{"ok":true}' }],
+            structuredContent: { ok: true as const },
+          };
+        } catch (e) {
+          if (e instanceof Error) return errResult('Error: ' + e.message);
+          throw e;
+        }
+      },
+    },
+
+    {
       name: 'irc_join',
       config: {
         title: 'Join an IRC channel',

@@ -22,8 +22,29 @@ import type {
   HistoryMessage,
   ReactionIndex,
   EventRecord,
+  TypingState,
 } from './types';
 import type { HistoryMode, Selector } from './chathistory';
+
+/** Spec ceiling: a typing notification must not be sent within 3s of another. */
+export const TYPING_REFRESH_MS = 3000;
+
+const DEFAULT_TYPING_WPM = 90;
+
+const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+
+/** Estimated human typing time for `textLength` characters, used to pace typing notifications. */
+export function typingDurationMs(
+  textLength: number,
+  opts: { wpm?: number; minMs?: number; maxMs?: number } = {},
+): number {
+  const wpm = opts.wpm ?? DEFAULT_TYPING_WPM;
+  const minMs = opts.minMs ?? 600;
+  const maxMs = opts.maxMs ?? 15000;
+  const charsPerSecond = (wpm * 5) / 60;
+  const raw = charsPerSecond > 0 ? (textLength / charsPerSecond) * 1000 : minMs;
+  return Math.min(maxMs, Math.max(minMs, Math.round(raw)));
+}
 
 export interface IrcClientOptions {
   host: string;
@@ -734,6 +755,43 @@ export class IrcClient extends EventEmitter {
     };
     this.sendCommand('TAGMSG', [target], tags);
     return Promise.resolve();
+  }
+
+  /**
+   * Send a typing notification (TAGMSG carrying the `+typing` client tag).
+   * `active` while composing, `paused` when stopped with text retained, `done`
+   * when the draft is cleared without sending.
+   */
+  sendTyping(target: string, state: TypingState = 'active'): void {
+    this.sendCommand('TAGMSG', [target], { '+typing': state });
+  }
+
+  /**
+   * Send a message preceded by typing notifications, holding `+typing=active`
+   * for a duration proportional to the message length and refreshing within the
+   * spec's 3-second window so observers see a natural typing indicator. Resolves
+   * like {@link sendMessage} once the message itself is confirmed.
+   */
+  async sendWithTyping(opts: {
+    target: string;
+    lines: string[];
+    notice?: boolean;
+    inReplyTo?: string;
+    wpm?: number;
+  }): Promise<{ ok: true; msgid?: string }> {
+    const { target, lines, notice, inReplyTo, wpm } = opts;
+    const textLength = lines.join('\n').length;
+
+    let remaining = typingDurationMs(textLength, { wpm });
+    this.sendTyping(target, 'active');
+    while (remaining > 0) {
+      const wait = Math.min(TYPING_REFRESH_MS, remaining);
+      await sleep(wait);
+      remaining -= wait;
+      if (remaining > 0) this.sendTyping(target, 'active');
+    }
+
+    return this.sendMessage({ target, lines, notice, inReplyTo });
   }
 
   /**

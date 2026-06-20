@@ -65,6 +65,8 @@ claude mcp add ircv3-mcp -- npx -y ircv3-mcp@latest
 **Writes**
 
 - `irc_send_message` — send a message or multiline batch; supports threading via `in_reply_to`
+- `irc_send_with_typing` — send a message after a length-proportional typing notification (~90 wpm)
+- `irc_start_typing` / `irc_stop_typing` — manually raise or clear a typing notification
 - `irc_react` — add or remove an emoji reaction on a message
 - `irc_join` — join a channel, optionally with a key
 - `irc_part` — leave a channel

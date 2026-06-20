@@ -111,6 +111,8 @@ function makePool(overrides: Partial<IrcClient> = {}): { pool: SessionPool; clie
       lines: ['Alice'],
     }),
     sendMessage: vi.fn().mockResolvedValue({ ok: true, msgid: 'm1' }),
+    sendWithTyping: vi.fn().mockResolvedValue({ ok: true, msgid: 'm1' }),
+    sendTyping: vi.fn(),
     recentEvents: vi.fn().mockReturnValue([
       {
         seq: 1,
@@ -159,6 +161,9 @@ describe('makeTools', () => {
     expect(names).toContain('irc_whois');
     expect(names).toContain('irc_recent_events');
     expect(names).toContain('irc_send_message');
+    expect(names).toContain('irc_send_with_typing');
+    expect(names).toContain('irc_start_typing');
+    expect(names).toContain('irc_stop_typing');
     expect(names).toContain('irc_react');
     expect(names).toContain('irc_join');
     expect(names).toContain('irc_part');
@@ -327,6 +332,47 @@ describe('makeTools', () => {
         emoji: '👋',
         remove: undefined,
       });
+    });
+  });
+
+  describe('irc_send_with_typing', () => {
+    it('calls client.sendWithTyping and returns ok with msgid', async () => {
+      const { pool, client } = makePool();
+      const tools = makeTools({ pool });
+      const t = tools.find((x) => x.name === 'irc_send_with_typing')!;
+      const result = await t.handler({ target: '#test', text: 'hello', wpm: 120 });
+      expect(sc(result)).toEqual({ ok: true, msgid: 'm1' });
+      expect(client.sendWithTyping).toHaveBeenCalledWith(
+        expect.objectContaining({ target: '#test', lines: ['hello'], wpm: 120 }),
+      );
+    });
+
+    it('returns isError when neither text nor lines provided', async () => {
+      const { pool } = makePool();
+      const tools = makeTools({ pool });
+      const t = tools.find((x) => x.name === 'irc_send_with_typing')!;
+      const result = await t.handler({ target: '#test' });
+      expect(result.isError).toBe(true);
+    });
+  });
+
+  describe('irc_start_typing / irc_stop_typing', () => {
+    it('start sends an active typing notification', async () => {
+      const { pool, client } = makePool();
+      const tools = makeTools({ pool });
+      const t = tools.find((x) => x.name === 'irc_start_typing')!;
+      const result = await t.handler({ target: '#test' });
+      expect(sc(result)).toEqual({ ok: true });
+      expect(client.sendTyping).toHaveBeenCalledWith('#test', 'active');
+    });
+
+    it('stop sends a done typing notification', async () => {
+      const { pool, client } = makePool();
+      const tools = makeTools({ pool });
+      const t = tools.find((x) => x.name === 'irc_stop_typing')!;
+      const result = await t.handler({ target: '#test' });
+      expect(sc(result)).toEqual({ ok: true });
+      expect(client.sendTyping).toHaveBeenCalledWith('#test', 'done');
     });
   });
 

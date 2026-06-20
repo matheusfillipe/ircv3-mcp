@@ -16,6 +16,8 @@ This MCP server connects you to one or more IRC networks. It provides a set of t
 ### Write tools (produce side effects)
 
 - `irc_send_message` — send a message to a channel or user. Provide `text` for a single line, or `lines` (array of strings) for a multiline message. Use `in_reply_to` with a msgid to thread the reply under an existing message. Use `notice: true` for a NOTICE instead of PRIVMSG.
+- `irc_send_with_typing` — same as `irc_send_message`, but first shows a typing notification and holds it for a short time proportional to the message length before sending. Tune the pace with `wpm` (default ~90). Prefer this in direct conversation where a natural typing indicator helps; use `irc_send_message` when you just want the text delivered immediately.
+- `irc_start_typing` / `irc_stop_typing` — manually raise (`+typing=active`) or clear (`+typing=done`) a typing notification for a target. A typing notification expires after about 6 seconds, so call `irc_start_typing` again to keep it alive across longer work. Use `irc_stop_typing` if you started typing but decided not to send.
 - `irc_react` — add or remove an emoji reaction on a message. Requires the `msgid` of the target message and the `target` channel/nick it was sent to.
 - `irc_join` — join a channel. Optionally supply a `key` (channel password).
 - `irc_part` — leave a channel with an optional reason string.

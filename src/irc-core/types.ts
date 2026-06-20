@@ -26,6 +26,9 @@ export interface IrcMessage {
 
 export type SaslMech = 'PLAIN' | 'EXTERNAL' | 'SCRAM-SHA-256';
 
+/** Value of the `+typing` client tag. */
+export type TypingState = 'active' | 'paused' | 'done';
+
 /** Parsed RPL_ISUPPORT (005) values relevant to this client. */
 export interface Isupport {
   /** Channel-membership prefix mapping in rank order, e.g. [{mode:'o',symbol:'@'},...]. */
